@@ -19,6 +19,8 @@ interface CameraPreviewProps {
   cameraFrames: CameraFrame[];
   /** カット一覧 */
   cuts: CutInfo[];
+  /** 外部からのシーク（ジャンプ）要求 */
+  seekRequest?: { time: number; nonce: number } | null;
 }
 
 // ============================================================
@@ -174,7 +176,7 @@ const SKELETON_DEF: BoneNodeDef = {
 // メインプレビューコンポーネント
 // ============================================================
 
-export function CameraPreview({ audioFile, vmdData, cameraFrames }: CameraPreviewProps) {
+export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequest }: CameraPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -203,6 +205,16 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames }: CameraPrevie
     setAudioUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [audioFile]);
+
+  // 外部からのジャンプ要求（タイムラインクリック時など）を処理
+  useEffect(() => {
+    if (!seekRequest) return;
+    const targetTime = Math.max(0, Math.min(seekRequest.time, duration || 9999));
+    setCurrentTime(targetTime);
+    if (audioRef.current) {
+      audioRef.current.currentTime = targetTime;
+    }
+  }, [seekRequest, duration]);
 
   // ============================================================
   // 1. Three.js シーンの初期化
@@ -558,6 +570,15 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames }: CameraPrevie
         {/* 画面内オーバーレイ */}
         <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-slate-900/80 px-2 py-1 text-[10px] font-mono text-cyan-400 backdrop-blur-sm border border-slate-700/40">
           FRAME: {Math.floor(currentTime * FPS)}
+          {/* 【新設】現在のカット名表示 */}
+          {(() => {
+            const curCut = [...cuts].reverse().find((c) => c.time <= currentTime + 0.05);
+            return curCut ? (
+              <div className="text-[11px] font-bold text-white">
+                #{curCut.index + 1} {curCut.pattern.toUpperCase()}
+              </div>
+            ) : null;
+          })()}
         </div>
 
         {viewMode === 'free' && (

@@ -28,29 +28,31 @@ interface BeatTimelineProps {
   audio: AudioAnalysisResult | null;
   /** 生成されたカメラカット情報の一覧 */
   cuts: CutInfo[];
-  /** カットのロック/アンロック切り替え時のコールバック 【新設】 */
+  /** カットのロック/アンロック切り替え時のコールバック */
   onToggleLock?: (cutIndex: number) => void;
-  /** カットのカメラパターン手動変更時のコールバック 【新設】 */
+  /** カットのカメラパターン手動変更時のコールバック */
   onChangePattern?: (cutIndex: number, newPattern: CameraPattern) => void;
+  /** 【新設】カットクリック（ジャンプ）時のコールバック */
+  onSelectCut?: (cut: CutInfo) => void;
+  /** 【新設】現在選択されているカットのインデックス番号 */
+  selectedCutIndex?: number | null;
 }
 
 // ============================================================
 // 表示用定数（カラー＆ラベルマップ）
 // ============================================================
 
-/** 各カメラパターンのタイムライン表示色 */
 const PATTERN_COLORS: Record<CameraPattern, string> = {
-  wide: '#3b82f6',        // 青: 引き
-  closeup: '#ef4444',     // 赤: 寄り
-  highangle: '#22c55e',   // 緑: 俯瞰
-  lowangle: '#f97316',    // オレンジ: ローアングル
-  orbit: '#a855f7',       // 紫: オービット
-  dolly: '#06b6d4',       // シアン: ドリー
-  dutch_angle: '#ec4899', // ピンク: ダッチアングル
-  tilt_up: '#eab308',     // イエローゴールド: ティルトアップ
+  wide: '#3b82f6',
+  closeup: '#ef4444',
+  highangle: '#22c55e',
+  lowangle: '#f97316',
+  orbit: '#a855f7',
+  dolly: '#06b6d4',
+  dutch_angle: '#ec4899',
+  tilt_up: '#eab308',
 };
 
-/** 各カメラパターンの短縮ラベル */
 const PATTERN_LABELS: Record<CameraPattern, string> = {
   wide: '引き',
   closeup: '寄り',
@@ -66,18 +68,14 @@ const PATTERN_LABELS: Record<CameraPattern, string> = {
 // メインコンポーネント
 // ============================================================
 
-/**
- * 楽曲解析結果およびカットタイムライン、カット編集カードトレイを描画するコンポーネント
- */
 export function BeatTimeline({
   audio,
   cuts,
   onToggleLock,
   onChangePattern,
+  onSelectCut,
+  selectedCutIndex,
 }: BeatTimelineProps) {
-  /**
-   * 画面描画用にエネルギー波形を約200本のバーにダウンサンプリングする
-   */
   const energyBars = useMemo(() => {
     if (!audio || audio.energyCurve.length === 0) return [];
 
@@ -95,7 +93,6 @@ export function BeatTimeline({
     return bars;
   }, [audio]);
 
-  // 音声未解析時のプレースホルダー表示
   if (!audio) {
     return (
       <div className="flex items-center justify-center rounded-xl border border-slate-700/40 bg-slate-800/20 p-12">
@@ -109,9 +106,7 @@ export function BeatTimeline({
 
   return (
     <div className="space-y-4 min-w-0">
-      {/* ---------------------------------------------------- */}
-      {/* 1. 楽曲＆解析サマリーカード                          */}
-      {/* ---------------------------------------------------- */}
+      {/* 1. 楽曲＆解析サマリーカード */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard
           icon={<Music size={16} />}
@@ -139,9 +134,7 @@ export function BeatTimeline({
         />
       </div>
 
-      {/* ---------------------------------------------------- */}
-      {/* 2. エネルギー波形表示                                */}
-      {/* ---------------------------------------------------- */}
+      {/* 2. エネルギー波形表示 */}
       <div>
         <p className="mb-2 text-xs font-medium text-slate-400">エネルギー波形</p>
         <div className="flex h-20 items-end gap-px overflow-hidden rounded-lg border border-slate-700/40 bg-slate-900/40 p-2">
@@ -159,9 +152,7 @@ export function BeatTimeline({
         </div>
       </div>
 
-      {/* ---------------------------------------------------- */}
-      {/* 3. カットタイムライン表示                            */}
-      {/* ---------------------------------------------------- */}
+      {/* 3. カットタイムライン表示 */}
       {cuts.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
@@ -169,14 +160,13 @@ export function BeatTimeline({
               カットタイムライン（{cuts.length}カット）
             </p>
             <span className="text-[10px] text-slate-500">
-              ※ロック（🔒）したカットは再生成時も維持されます
+              ※カードまたはバーをクリックするとプレビューがその位置にジャンプします
             </span>
           </div>
 
           {/* 全体時間軸バー */}
           <div className="relative h-14 overflow-hidden rounded-lg border border-slate-700/40 bg-slate-900/40 p-2">
             <div className="relative h-full">
-              {/* 時間グリッド線 (25%, 50%, 75%) */}
               {[0.25, 0.5, 0.75].map((frac) => (
                 <div
                   key={frac}
@@ -185,31 +175,37 @@ export function BeatTimeline({
                 />
               ))}
 
-              {/* カットマーカーバー群 */}
+              {/* カットマーカーバー群（クリック可能） */}
               <div className="relative h-full">
                 {cuts.map((cut) => {
                   const pct = (cut.time / audio.duration) * 100;
                   const color = PATTERN_COLORS[cut.pattern] ?? '#22d3ee';
+                  const isSelected = selectedCutIndex === cut.index;
+
                   return (
                     <div
                       key={cut.index}
-                      className="absolute bottom-0 top-0 flex flex-col items-center justify-end"
+                      onClick={() => onSelectCut?.(cut)}
+                      className="group absolute bottom-0 top-0 flex cursor-pointer flex-col items-center justify-end"
                       style={{ left: `${pct}%`, transform: 'translateX(-50%)' }}
                       title={`#${cut.index + 1} (${cut.time.toFixed(2)}秒): ${
                         PATTERN_LABELS[cut.pattern] ?? cut.pattern
-                      }${cut.isLocked ? ' [固定中]' : ''}`}
+                      }${cut.isLocked ? ' [固定中]' : ''}（クリックでジャンプ）`}
                     >
-                      {/* ロック中の場合は上部に小さな鍵ドットを表示 */}
                       {cut.isLocked && (
                         <div className="mb-0.5 h-1 w-1 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400" />
                       )}
                       <div
-                        className="w-1.5 rounded-t transition-all"
+                        className={`rounded-t transition-all ${
+                          isSelected
+                            ? 'w-2.5 ring-2 ring-white brightness-125'
+                            : 'w-1.5 group-hover:scale-y-110 group-hover:brightness-110'
+                        }`}
                         style={{
                           backgroundColor: color,
                           height: '100%',
                           minHeight: '8px',
-                          opacity: cut.isLocked ? 1 : 0.85,
+                          opacity: cut.isLocked || isSelected ? 1 : 0.85,
                         }}
                       />
                     </div>
@@ -219,7 +215,7 @@ export function BeatTimeline({
             </div>
           </div>
 
-          {/* パターン凡例 (Legend) */}
+          {/* パターン凡例 */}
           <div className="flex flex-wrap gap-x-4 gap-y-1">
             {Object.entries(PATTERN_COLORS).map(([pattern, color]) => {
               const p = pattern as CameraPattern;
@@ -233,36 +229,40 @@ export function BeatTimeline({
             })}
           </div>
 
-          {/* ---------------------------------------------------- */}
-          {/* 4. 各カットの編集・固定カードトレイ（横スクロール）   */}
-          {/* ---------------------------------------------------- */}
+          {/* 4. 各カットの編集・固定カードトレイ（横スクロール） */}
           <div className="mt-3 min-w-0 max-w-full">
             <p className="mb-2 text-xs font-medium text-slate-400">
-              カット一覧・個別設定（横スクロール）
+              カット一覧・個別設定（クリックでそのシーンにジャンプ）
             </p>
 
-            <div className="flex w-full max-w-full gap-2 overflow-x-auto pb-2">
+            <div className="flex w-full max-w-full gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-track-slate-800/40 scrollbar-thumb-slate-700/60">
               {cuts.map((cut) => {
                 const color = PATTERN_COLORS[cut.pattern] ?? '#22d3ee';
                 const isLocked = !!cut.isLocked;
+                const isSelected = selectedCutIndex === cut.index;
 
                 return (
                   <div
                     key={cut.index}
-                    className={`flex min-w-[130px] flex-col justify-between rounded-lg border p-2.5 transition-all ${
-                      isLocked
-                        ? 'border-cyan-500/60 bg-cyan-950/20 shadow-sm shadow-cyan-500/10'
-                        : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-600'
+                    onClick={() => onSelectCut?.(cut)}
+                    className={`flex min-w-[130px] cursor-pointer flex-col justify-between rounded-lg border p-2.5 transition-all ${
+                      isSelected
+                        ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-500/20 ring-2 ring-cyan-400'
+                        : isLocked
+                        ? 'border-cyan-500/60 bg-cyan-950/20 shadow-sm shadow-cyan-500/10 hover:border-cyan-400'
+                        : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/60'
                     }`}
                   >
-                    {/* カード上部: カット番号 & 開始秒数 */}
+                    {/* カード上部 */}
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-bold text-slate-300">#{cut.index + 1}</span>
+                      <span className={`font-bold ${isSelected ? 'text-cyan-300' : 'text-slate-300'}`}>
+                        #{cut.index + 1}
+                      </span>
                       <span className="text-slate-500">{cut.time.toFixed(1)}s</span>
                     </div>
 
-                    {/* カード中央: パターン選択セレクトボックス */}
-                    <div className="my-2">
+                    {/* カード中央: パターン選択（親のクリックジャンプを防止） */}
+                    <div className="my-2" onClick={(e) => e.stopPropagation()}>
                       <select
                         value={cut.pattern}
                         onChange={(e) =>
@@ -279,10 +279,13 @@ export function BeatTimeline({
                       </select>
                     </div>
 
-                    {/* カード下部: ロック/解除ボタントグル */}
+                    {/* カード下部: ロックボタン（親のクリックジャンプを防止） */}
                     <button
                       type="button"
-                      onClick={() => onToggleLock?.(cut.index)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleLock?.(cut.index);
+                      }}
                       className={`flex w-full items-center justify-center gap-1 rounded py-1 text-[11px] font-medium transition-all ${
                         isLocked
                           ? 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
@@ -313,7 +316,7 @@ export function BeatTimeline({
 }
 
 // ============================================================
-// サブコンポーネント (Private Helper Component)
+// サブコンポーネント
 // ============================================================
 
 interface StatCardProps {

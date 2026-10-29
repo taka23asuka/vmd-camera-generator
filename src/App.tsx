@@ -18,7 +18,7 @@ import { CameraPreview } from '@/components/CameraPreview';
 import { analyzeAudio } from '@/lib/audio';
 import { parseVMD, writeCameraVMD } from '@/lib/vmd';
 import { generateCameraMotion, downloadVMD, type GenerationResult } from '@/lib/camera';
-import type {AudioAnalysisResult, CameraGenerationOptions, CameraPattern, VMDParseResult} from '@/types';
+import type {AudioAnalysisResult, CameraGenerationOptions, CameraPattern, CutInfo, VMDParseResult} from '@/types';
 
 // ============================================================
 // アプリケーション状態の型定義
@@ -59,6 +59,8 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState('');
   const [showSettings, setShowSettings] = useState(true);
+  const [selectedCutIndex, setSelectedCutIndex] = useState<number | null>(null);
+  const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number } | null>(null);
 
   // ------------------------------------------------------------
   // 3. カメラ生成オプション設定
@@ -97,6 +99,8 @@ export default function App() {
     setProgress(0);
     setProgressLabel('');
     generatedBufferRef.current = null;
+    setSelectedCutIndex(null);
+    setSeekRequest(null);
   }, []);
 
   /**
@@ -235,6 +239,15 @@ export default function App() {
     [audioAnalysis, vmdParseResult, options]
   );
 
+  /**
+   * タイムラインまたはカードクリック時のカット選択＆ジャンプハンドラ
+   */
+  const handleSelectCut = useCallback((cut: CutInfo) => {
+    setSelectedCutIndex(cut.index);
+    // 同じカットを連続でクリックしても確実に検知できるよう nonce（タイムスタンプ）を付与
+    setSeekRequest({ time: cut.time, nonce: Date.now() });
+  }, []);
+
   // ------------------------------------------------------------
   // 5. 算出プロパティ (Computed)
   // ------------------------------------------------------------
@@ -354,6 +367,8 @@ export default function App() {
                   cuts={generationResult?.cuts ?? []}
                   onToggleLock={handleToggleLock}
                   onChangePattern={handleChangePattern}
+                  onSelectCut={handleSelectCut}
+                  selectedCutIndex={selectedCutIndex}
                 />
               </div>
             </section>
@@ -404,6 +419,7 @@ export default function App() {
                       vmdData={vmdParseResult?.data ?? null}
                       cameraFrames={generationResult.cameraFrames}
                       cuts={generationResult.cuts}
+                      seekRequest={seekRequest}
                     />
 
                     <div className="flex items-center justify-between rounded-lg border border-green-800/30 bg-green-900/10 px-4 py-3">
