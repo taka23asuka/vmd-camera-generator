@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useMemo } from 'react';
+import { useMemo, useRef, useEffect, useState } from 'react';
 import {
   CAMERA_PATTERNS,
   type AudioAnalysisResult,
@@ -14,15 +14,15 @@ import {
   Clapperboard,
   Lock,
   Unlock,
+  Play,
+  Pause,
+  RotateCcw,
 } from 'lucide-react';
 
 // ============================================================
 // コンポーネント Props 定義
 // ============================================================
 
-/**
- * BeatTimeline コンポーネントのプロパティ
- */
 interface BeatTimelineProps {
   /** 音声解析結果（未解析時は null） */
   audio: AudioAnalysisResult | null;
@@ -32,10 +32,22 @@ interface BeatTimelineProps {
   onToggleLock?: (cutIndex: number) => void;
   /** カットのカメラパターン手動変更時のコールバック */
   onChangePattern?: (cutIndex: number, newPattern: CameraPattern) => void;
-  /** 【新設】カットクリック（ジャンプ）時のコールバック */
+  /** カットクリック（ジャンプ）時のコールバック */
   onSelectCut?: (cut: CutInfo) => void;
-  /** 【新設】現在選択されているカットのインデックス番号 */
+  /** 現在手動選択されているカットのインデックス番号 */
   selectedCutIndex?: number | null;
+  /** プレビューの現在再生時間（秒） */
+  currentTime?: number;
+  /** 総再生時間（秒） */
+  duration?: number;
+  /** 再生中かどうかのフラグ */
+  isPlaying?: boolean;
+  /** 【新設】再生/一時停止切り替えコールバック */
+  onTogglePlay?: () => void;
+  /** 【新設】シークバー操作コールバック */
+  onSeek?: (time: number) => void;
+  /** 【新設】最初に戻るコールバック */
+  onResetTime?: () => void;
 }
 
 // ============================================================
@@ -75,7 +87,19 @@ export function BeatTimeline({
   onChangePattern,
   onSelectCut,
   selectedCutIndex,
+  currentTime = 0,
+  duration = 0,
+  isPlaying = false,
+  onTogglePlay,
+  onSeek,
+  onResetTime,
 }: BeatTimelineProps) {
+  // 自動追従スクロール用：各カットカードのDOM参照を保持
+  const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+
+  // 【新設】波形表示の開閉トグル（縦幅節約のためデフォルトは非表示）
+  const [showWaveform, setShowWaveform] = useState(false);
+
   const energyBars = useMemo(() => {
     if (!audio || audio.energyCurve.length === 0) return [];
 
@@ -93,79 +117,150 @@ export function BeatTimeline({
     return bars;
   }, [audio]);
 
+  /** 現在再生中のカットインデックスを算出 */
+  const activePlayingIndex = useMemo(() => {
+    if (cuts.length === 0) return null;
+    let found = cuts[0].index;
+    for (let i = 0; i < cuts.length; i++) {
+      if (cuts[i].time <= currentTime + 0.05) {
+        found = cuts[i].index;
+      } else {
+        break;
+      }
+    }
+    return found;
+  }, [cuts, currentTime]);
+
+  /** 再生中のカットカードが自動で中央に来るように追従スクロール */
+  useEffect(() => {
+    if (activePlayingIndex !== null && currentTime > 0) {
+      const cardEl = cardRefs.current.get(activePlayingIndex);
+      if (cardEl) {
+        cardEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      }
+    }
+  }, [activePlayingIndex, currentTime]);
+
+  // 時間表記フォーマット (例: 01:23.4)
+  const formatTime = (t: number) => {
+    const m = Math.floor(t / 60);
+    const s = Math.floor(t % 60);
+    const ms = Math.floor((t % 1) * 10);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms}`;
+  };
+
+  const totalDuration = duration || audio?.duration || 1;
+  const playheadPct = totalDuration > 0 ? Math.min(100, Math.max(0, (currentTime / totalDuration) * 100)) : 0;
+
   if (!audio) {
     return (
-      <div className="flex items-center justify-center rounded-xl border border-slate-700/40 bg-slate-800/20 p-12">
+      <div className="flex items-center justify-center rounded-xl border border-slate-700/40 bg-slate-800/20 p-6">
         <div className="text-center">
-          <Activity size={32} className="mx-auto mb-3 text-slate-700" />
-          <p className="text-sm text-slate-600">音声を解析するとここに結果が表示されます</p>
+          <Activity size={24} className="mx-auto mb-1.5 text-slate-700" />
+          <p className="text-xs text-slate-600">音声を解析するとここにタイムラインが表示されます</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 min-w-0">
-      {/* 1. 楽曲＆解析サマリーカード */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard
-          icon={<Music size={16} />}
-          label="推定BPM"
-          value={audio.bpm.toString()}
-          color="text-cyan-400"
-        />
-        <StatCard
-          icon={<Clock size={16} />}
-          label="再生時間"
-          value={`${audio.duration.toFixed(1)}秒`}
-          color="text-blue-400"
-        />
-        <StatCard
-          icon={<Zap size={16} />}
-          label="検出ビート数"
-          value={audio.peakTimes.length.toString()}
-          color="text-amber-400"
-        />
-        <StatCard
-          icon={<Clapperboard size={16} />}
-          label="生成カット数"
-          value={cuts.length > 0 ? `${cuts.length}カット` : '-'}
-          color="text-green-400"
-        />
-      </div>
+    <div className="space-y-2.5 min-w-0">
+      {/* ---------------------------------------------------- */}
+      {/* 1. 【統合】メディアコントロール ＆ シークバー ＆ 指標   */}
+      {/* ---------------------------------------------------- */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-2">
+        {/* 左側: 再生/停止ボタン ＆ 時間表示 */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onResetTime}
+            className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
+            title="最初に戻る"
+          >
+            <RotateCcw size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onTogglePlay}
+            className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-sm shadow-cyan-500/20 transition-all hover:brightness-110 active:scale-95"
+            title={isPlaying ? '一時停止 (Space)' : '再生 (Space)'}
+          >
+            {isPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}
+          </button>
+          <div className="font-mono text-[11px] text-slate-300">
+            <span className="text-cyan-400 font-semibold">{formatTime(currentTime)}</span>
+            <span className="text-slate-600 mx-1">/</span>
+            <span className="text-slate-500">{formatTime(totalDuration)}</span>
+          </div>
+        </div>
 
-      {/* 2. エネルギー波形表示 */}
-      <div>
-        <p className="mb-2 text-xs font-medium text-slate-400">エネルギー波形</p>
-        <div className="flex h-20 items-end gap-px overflow-hidden rounded-lg border border-slate-700/40 bg-slate-900/40 p-2">
-          {energyBars.map((v, i) => (
-            <div
-              key={i}
-              className="flex-1 rounded-t-sm transition-all"
-              style={{
-                height: `${Math.max(2, v * 100)}%`,
-                backgroundColor: v > 0.6 ? '#22d3ee' : v > 0.3 ? '#0891b2' : '#1e3a5f',
-                minWidth: '2px',
-              }}
-            />
-          ))}
+        {/* 中央: 横に伸びるシークバースライダー */}
+        <div className="flex-1 min-w-[140px] px-2">
+          <input
+            type="range"
+            min={0}
+            max={totalDuration}
+            step={0.01}
+            value={currentTime}
+            onChange={(e) => onSeek?.(parseFloat(e.target.value))}
+            className="w-full accent-cyan-500 cursor-pointer"
+          />
+        </div>
+
+        {/* 右側: 波形トグルボタン ＆ ミニサマリーバッジ */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowWaveform(!showWaveform)}
+            className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-all ${
+              showWaveform
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200 border border-slate-700/50'
+            }`}
+            title="エネルギー波形の表示/非表示を切り替え"
+          >
+            <Activity size={12} />
+            <span>波形</span>
+          </button>
+
+          <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-400 border-l border-slate-700/60 pl-2">
+            <span className="text-slate-500">BPM:</span>
+            <span className="font-bold text-slate-300">{audio.bpm}</span>
+            <span className="text-slate-600 mx-0.5">•</span>
+            <span className="font-bold text-green-400">{cuts.length}</span>
+            <span className="text-slate-500">カット</span>
+          </div>
         </div>
       </div>
 
-      {/* 3. カットタイムライン表示 */}
-      {cuts.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-slate-400">
-              カットタイムライン（{cuts.length}カット）
-            </p>
-            <span className="text-[10px] text-slate-500">
-              ※カードまたはバーをクリックするとプレビューがその位置にジャンプします
-            </span>
+      {/* ---------------------------------------------------- */}
+      {/* 2. エネルギー波形表示（トグル時のみ展開）            */}
+      {/* ---------------------------------------------------- */}
+      {showWaveform && (
+        <div className="animate-fadeIn">
+          <div className="flex h-10 items-end gap-px overflow-hidden rounded-lg border border-slate-700/40 bg-slate-900/50 p-1">
+            {energyBars.map((v, i) => (
+              <div
+                key={i}
+                className="flex-1 rounded-t-sm transition-all"
+                style={{
+                  height: `${Math.max(4, v * 100)}%`,
+                  backgroundColor: v > 0.6 ? '#22d3ee' : v > 0.3 ? '#0891b2' : '#1e3a5f',
+                  minWidth: '2px',
+                }}
+              />
+            ))}
           </div>
+        </div>
+      )}
 
+      {/* ---------------------------------------------------- */}
+      {/* 3. カットタイムライン表示                            */}
+      {/* ---------------------------------------------------- */}
+      {cuts.length > 0 && (
+        <div className="space-y-2">
           {/* 全体時間軸バー */}
-          <div className="relative h-14 overflow-hidden rounded-lg border border-slate-700/40 bg-slate-900/40 p-2">
+          <div className="relative h-9 overflow-hidden rounded-lg border border-slate-700/40 bg-slate-900/60 p-1">
             <div className="relative h-full">
               {[0.25, 0.5, 0.75].map((frac) => (
                 <div
@@ -175,10 +270,10 @@ export function BeatTimeline({
                 />
               ))}
 
-              {/* カットマーカーバー群（クリック可能） */}
+              {/* カットマーカーバー群 */}
               <div className="relative h-full">
                 {cuts.map((cut) => {
-                  const pct = (cut.time / audio.duration) * 100;
+                  const pct = (cut.time / totalDuration) * 100;
                   const color = PATTERN_COLORS[cut.pattern] ?? '#22d3ee';
                   const isSelected = selectedCutIndex === cut.index;
 
@@ -211,64 +306,84 @@ export function BeatTimeline({
                     </div>
                   );
                 })}
+
+                {/* 赤いリアルタイム再生ヘッド（針） */}
+                {currentTime > 0 && (
+                  <div
+                    className="pointer-events-none absolute -top-1 bottom-0 z-20 flex flex-col items-center transition-[left] duration-75"
+                    style={{ left: `${playheadPct}%`, transform: 'translateX(-50%)' }}
+                  >
+                    <div className="h-0 w-0 border-x-3 border-t-5 border-x-transparent border-t-red-500" />
+                    <div className="w-0.5 flex-1 bg-red-500 shadow-sm shadow-red-500/80" />
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
           {/* パターン凡例 */}
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
             {Object.entries(PATTERN_COLORS).map(([pattern, color]) => {
               const p = pattern as CameraPattern;
               if (!cuts.some((c) => c.pattern === p)) return null;
               return (
-                <div key={pattern} className="flex items-center gap-1.5">
-                  <div className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+                <div key={pattern} className="flex items-center gap-1">
+                  <div className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
                   <span className="text-[10px] text-slate-500">{PATTERN_LABELS[p]}</span>
                 </div>
               );
             })}
           </div>
 
-          {/* 4. 各カットの編集・固定カードトレイ（横スクロール） */}
-          <div className="mt-3 min-w-0 max-w-full">
-            <p className="mb-2 text-xs font-medium text-slate-400">
-              カット一覧・個別設定（クリックでそのシーンにジャンプ）
-            </p>
-
-            <div className="flex w-full max-w-full gap-2 overflow-x-auto pb-2 scrollbar-thin scrollbar-track-slate-800/40 scrollbar-thumb-slate-700/60">
+          {/* 4. 各カットの編集・固定カードトレイ */}
+          <div className="mt-2 min-w-0 max-w-full">
+            <div className="flex w-full max-w-full gap-2 overflow-x-auto pb-1 scrollbar-thin scrollbar-track-slate-800/40 scrollbar-thumb-slate-700/60">
               {cuts.map((cut) => {
                 const color = PATTERN_COLORS[cut.pattern] ?? '#22d3ee';
                 const isLocked = !!cut.isLocked;
                 const isSelected = selectedCutIndex === cut.index;
+                const isPlayingCut = activePlayingIndex === cut.index && isPlaying;
 
                 return (
                   <div
                     key={cut.index}
+                    ref={(el) => {
+                      if (el) cardRefs.current.set(cut.index, el);
+                      else cardRefs.current.delete(cut.index);
+                    }}
                     onClick={() => onSelectCut?.(cut)}
-                    className={`flex min-w-[130px] cursor-pointer flex-col justify-between rounded-lg border p-2.5 transition-all ${
+                    className={`flex min-w-[125px] cursor-pointer flex-col justify-between rounded-lg border p-2 transition-all ${
                       isSelected
                         ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-500/20 ring-2 ring-cyan-400'
+                        : isPlayingCut
+                        ? 'border-red-500/80 bg-red-950/20 shadow-md shadow-red-500/10'
                         : isLocked
                         ? 'border-cyan-500/60 bg-cyan-950/20 shadow-sm shadow-cyan-500/10 hover:border-cyan-400'
                         : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/60'
                     }`}
                   >
-                    {/* カード上部 */}
                     <div className="flex items-center justify-between text-[11px]">
-                      <span className={`font-bold ${isSelected ? 'text-cyan-300' : 'text-slate-300'}`}>
-                        #{cut.index + 1}
-                      </span>
-                      <span className="text-slate-500">{cut.time.toFixed(1)}s</span>
+                      <div className="flex items-center gap-1">
+                        <span className={`font-bold ${isSelected ? 'text-cyan-300' : isPlayingCut ? 'text-red-300' : 'text-slate-300'}`}>
+                          #{cut.index + 1}
+                        </span>
+                        {isPlayingCut && (
+                          <span className="flex items-center gap-0.5 rounded bg-red-500 px-1 py-0.2 text-[8px] font-bold text-white shadow-sm shadow-red-500 animate-pulse">
+                            <Play size={6} className="fill-current" />
+                            PLAY
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-500">{cut.time.toFixed(1)}s</span>
                     </div>
 
-                    {/* カード中央: パターン選択（親のクリックジャンプを防止） */}
-                    <div className="my-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="my-1.5" onClick={(e) => e.stopPropagation()}>
                       <select
                         value={cut.pattern}
                         onChange={(e) =>
                           onChangePattern?.(cut.index, e.target.value as CameraPattern)
                         }
-                        className="w-full rounded border border-slate-700/60 bg-slate-900/80 px-2 py-1 text-xs font-medium text-slate-200 outline-none transition-colors focus:border-cyan-500/50"
+                        className="w-full rounded border border-slate-700/60 bg-slate-900/80 px-1.5 py-0.5 text-xs font-medium text-slate-200 outline-none transition-colors focus:border-cyan-500/50"
                         style={{ borderLeftColor: color, borderLeftWidth: '3px' }}
                       >
                         {CAMERA_PATTERNS.map((p) => (
@@ -279,14 +394,13 @@ export function BeatTimeline({
                       </select>
                     </div>
 
-                    {/* カード下部: ロックボタン（親のクリックジャンプを防止） */}
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onToggleLock?.(cut.index);
                       }}
-                      className={`flex w-full items-center justify-center gap-1 rounded py-1 text-[11px] font-medium transition-all ${
+                      className={`flex w-full items-center justify-center gap-1 rounded py-0.5 text-[10px] font-medium transition-all ${
                         isLocked
                           ? 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
                           : 'bg-slate-700/30 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
@@ -294,12 +408,12 @@ export function BeatTimeline({
                     >
                       {isLocked ? (
                         <>
-                          <Lock size={12} className="text-cyan-400" />
+                          <Lock size={11} className="text-cyan-400" />
                           <span>固定中</span>
                         </>
                       ) : (
                         <>
-                          <Unlock size={12} />
+                          <Unlock size={11} />
                           <span>固定する</span>
                         </>
                       )}
@@ -311,29 +425,6 @@ export function BeatTimeline({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// ============================================================
-// サブコンポーネント
-// ============================================================
-
-interface StatCardProps {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  color: string;
-}
-
-function StatCard({ icon, label, value, color }: StatCardProps) {
-  return (
-    <div className="rounded-lg border border-slate-700/40 bg-slate-800/30 p-3">
-      <div className={`mb-1 flex items-center gap-1.5 ${color}`}>
-        {icon}
-        <span className="text-[10px] font-medium text-slate-500">{label}</span>
-      </div>
-      <p className={`text-lg font-bold ${color}`}>{value}</p>
     </div>
   );
 }

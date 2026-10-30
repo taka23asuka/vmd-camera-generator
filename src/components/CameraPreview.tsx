@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { Play, Pause, RotateCcw, Eye, Video } from 'lucide-react';
+import { Eye, Video } from 'lucide-react';
 import type { CameraFrame, VMDData, CutInfo } from '@/types';
 
 const FPS = 30;
@@ -21,6 +21,14 @@ interface CameraPreviewProps {
   cuts: CutInfo[];
   /** 外部からのシーク（ジャンプ）要求 */
   seekRequest?: { time: number; nonce: number } | null;
+  /** 再生時間の更新を親へ通知するコールバック */
+  onTimeUpdate?: (time: number) => void;
+  /** 総再生時間（秒）を親へ通知するコールバック */
+  onDurationChange?: (duration: number) => void;
+  /** 再生/一時停止状態の変化を親へ通知するコールバック */
+  onPlayStateChange?: (isPlaying: boolean) => void;
+  /** 外部からの再生/一時停止トリガー */
+  playTrigger?: number;
 }
 
 // ============================================================
@@ -122,7 +130,7 @@ const SKELETON_DEF: BoneNodeDef = {
                       offset: [1.3, 0, 0],
                       children: [
                         {
-                          name: '左ひざ',
+                          name: '左ひじ',
                           matchPatterns: [/^左ひじ$/i, /^左肘$/i, /^leftelbow$/i],
                           offset: [2.6, 0, 0],
                           children: [
@@ -173,14 +181,23 @@ const SKELETON_DEF: BoneNodeDef = {
 };
 
 // ============================================================
-// メインプレビューコンポーネント
+// メインプレビューコンポーネント (純粋な大画面3D映像モニター)
 // ============================================================
 
-export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequest }: CameraPreviewProps) {
+export function CameraPreview({
+  audioFile,
+  vmdData,
+  cameraFrames,
+  cuts,
+  seekRequest,
+  onTimeUpdate,
+  onDurationChange,
+  onPlayStateChange,
+  playTrigger,
+}: CameraPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [viewMode, setViewMode] = useState<'camera' | 'free'>('camera');
@@ -216,9 +233,48 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
     }
   }, [seekRequest, duration]);
 
-  // ============================================================
+  // 再生操作ハンドラ
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      audio.play().then(() => {
+        onPlayStateChange?.(true);
+      }).catch((e) => console.error('[Preview] Play error:', e));
+    } else {
+      audio.pause();
+      onPlayStateChange?.(false);
+    }
+  }, [onPlayStateChange]);
+
+  useEffect(() => {
+    if (playTrigger !== undefined && playTrigger > 0) {
+      togglePlay();
+    }
+  }, [playTrigger, togglePlay]);
+
+  // グローバルなスペースキーリスナー
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [togglePlay]);
+
   // 1. Three.js シーンの初期化
-  // ============================================================
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -235,20 +291,17 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
     scene.add(gridHelper);
 
     // ライト
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.85);
     scene.add(ambientLight);
     const dirLight = new THREE.DirectionalLight(0x22d3ee, 1.2);
     dirLight.position.set(10, 20, 15);
     scene.add(dirLight);
 
-    // --------------------------------------------------------
-    // 生成カメラ機構（Target-Camera）
-    // --------------------------------------------------------
+    // 生成カメラ機構
     const targetGroup = new THREE.Group();
     scene.add(targetGroup);
     targetGroupRef.current = targetGroup;
 
-    // 注視点マーカー（ピンク球体：ディレクターズ視点時のみ表示）
     const markerGeom = new THREE.SphereGeometry(0.5, 12, 12);
     const markerMat = new THREE.MeshBasicMaterial({ color: 0xec4899, wireframe: true });
     const targetMarker = new THREE.Mesh(markerGeom, markerMat);
@@ -259,27 +312,22 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
     targetGroup.add(mainCam);
     mainCameraRef.current = mainCam;
 
-    // 【新設】カメラ視錐台ヘルパー（ディレクターズ視点時にカメラの四角錐枠を描画）
     const camHelper = new THREE.CameraHelper(mainCam);
     scene.add(camHelper);
     cameraHelperRef.current = camHelper;
 
-    // 自由視点（ディレクターズカメラ：引きの鳥瞰）
     const freeCam = new THREE.PerspectiveCamera(45, width / height, 0.5, 300);
     freeCam.position.set(0, 22, 65);
     freeCam.lookAt(0, 9, 0);
     freeCameraRef.current = freeCam;
 
-    // レンダラー
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     containerRef.current.replaceChildren(renderer.domElement);
     rendererRef.current = renderer;
 
-    // --------------------------------------------------------
-    // ボーン階層（サイバー骨格）の構築
-    // --------------------------------------------------------
+    // ボーン階層の構築
     const boneMap = new Map<string, { bone: THREE.Bone; keyframes: any[] }>();
     const allBones: THREE.Bone[] = [];
 
@@ -315,7 +363,6 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
 
     const rootBone = buildBone(SKELETON_DEF, null);
 
-    // 頭部スフィア
     const headObj = boneMap.get('頭')?.bone;
     if (headObj) {
       const headGeom = new THREE.SphereGeometry(0.85, 16, 16);
@@ -329,7 +376,6 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
       headObj.add(headMesh);
     }
 
-    // 骨格ライン
     const skeletonHelper = new THREE.SkeletonHelper(rootBone);
     (skeletonHelper.material as THREE.LineBasicMaterial).color.set(0x38bdf8);
     (skeletonHelper.material as THREE.LineBasicMaterial).linewidth = 2;
@@ -355,9 +401,7 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
     };
   }, [vmdData]);
 
-  // ============================================================
   // 2. フレームごとのアニメーション同期ループ
-  // ============================================================
   useEffect(() => {
     let animId: number;
 
@@ -367,10 +411,11 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
       const audio = audioRef.current;
       const time = audio ? audio.currentTime : 0;
       setCurrentTime(time);
+      onTimeUpdate?.(time);
 
       const frameNumber = Math.floor(time * FPS);
 
-      // --- A. ボーンアニメーションの適用 ---
+      // ボーンアニメーション
       const boneMap = boneMapRef.current;
       boneMap.forEach(({ bone, keyframes }, name) => {
         if (!keyframes || keyframes.length === 0) return;
@@ -401,7 +446,7 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
         }
       });
 
-      // --- B. カメラアニメーションの適用 ---
+      // カメラアニメーション
       if (mainCameraRef.current && targetGroupRef.current && cameraFrames.length > 0) {
         let lo = 0,
           hi = cameraFrames.length - 1;
@@ -415,41 +460,34 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
         const span = cB.frameNumber - cA.frameNumber;
         const t = span <= 0 ? 0 : Math.min(1, Math.max(0, (frameNumber - cA.frameNumber) / span));
 
-        // 注視点 (Target)
         const tx = THREE.MathUtils.lerp(cA.position.x, cB.position.x, t);
         const ty = THREE.MathUtils.lerp(cA.position.y, cB.position.y, t);
         const tz = THREE.MathUtils.lerp(cA.position.z, cB.position.z, t);
         targetGroupRef.current.position.set(tx, ty, tz);
 
-        // オイラー角 (MMD規格: MMDのRxは符号反転)
         const rx = THREE.MathUtils.lerp(cA.rotation.x, cB.rotation.x, t);
         const ry = THREE.MathUtils.lerp(cA.rotation.y, cB.rotation.y, t);
         const rz = THREE.MathUtils.lerp(cA.rotation.z, cB.rotation.z, t);
         targetGroupRef.current.rotation.set(-rx, ry, rz, 'YXZ');
 
-        // 距離 (Distance)
         const dist = THREE.MathUtils.lerp(cA.distance, cB.distance, t);
         mainCameraRef.current.position.set(0, 0, Math.abs(dist));
 
-        // 視野角 (FOV)
         const fov = THREE.MathUtils.lerp(cA.fov, cB.fov, t);
         if (Math.abs(mainCameraRef.current.fov - fov) > 0.1) {
           mainCameraRef.current.fov = fov;
           mainCameraRef.current.updateProjectionMatrix();
         }
 
-        // カメラヘルパーの更新
         if (cameraHelperRef.current) {
           cameraHelperRef.current.update();
         }
       }
 
-      // --- C. 表示モードに応じたヘルパーの表示/非表示 ---
       const isFreeView = viewMode === 'free';
       if (cameraHelperRef.current) cameraHelperRef.current.visible = isFreeView;
       if (targetMarkerRef.current) targetMarkerRef.current.visible = isFreeView;
 
-      // レンダリング実行
       if (rendererRef.current && sceneRef.current) {
         const activeCam = isFreeView ? freeCameraRef.current : mainCameraRef.current;
         if (activeCam) {
@@ -460,172 +498,66 @@ export function CameraPreview({ audioFile, vmdData, cameraFrames, cuts, seekRequ
 
     animId = requestAnimationFrame(renderLoop);
     return () => cancelAnimationFrame(animId);
-  }, [cameraFrames, viewMode]);
+  }, [cameraFrames, viewMode, onTimeUpdate]);
 
-  // ============================================================
-  // 再生操作ハンドラ
-  // ============================================================
-
-  const togglePlay = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) {
-      audio.play();
-      setIsPlaying(true);
-    } else {
-      audio.pause();
-      setIsPlaying(false);
-    }
-  }, []);
-
-  // 【新設】グローバルなスペースキーリスナー（どこをクリックしていてもスペースキーで再生/停止）
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // input 要素や select 要素にフォーカスがある時は誤爆防止のため除外
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLSelectElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      if (e.code === 'Space') {
-        e.preventDefault(); // 画面スクロールを防止
-        togglePlay();
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [togglePlay]);
-
-  const handleSeek = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    setCurrentTime(time);
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-    }
-  }, []);
-
-  const handleReset = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.pause();
-    }
-    setCurrentTime(0);
-    setIsPlaying(false);
-  }, []);
-
-  const formatTime = (t: number) => {
-    const m = Math.floor(t / 60);
-    const s = Math.floor(t % 60);
-    const ms = Math.floor((t % 1) * 10);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms}`;
-  };
+{/* src/components/CameraPreview.tsx の return 部分 */}
 
   return (
-    <div className="rounded-xl border border-slate-700/50 bg-slate-900/60 p-4">
+    /* 【修正】 w-full flex justify-center で親の幅を確保 */
+    <div className="relative w-full flex justify-center">
       {/* 隠し audio 要素 */}
       {audioUrl && (
         <audio
           ref={audioRef}
           src={audioUrl}
-          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-          onEnded={() => setIsPlaying(false)}
+          onLoadedMetadata={(e) => {
+            const dur = e.currentTarget.duration;
+            setDuration(dur);
+            onDurationChange?.(dur);
+          }}
+          onPlay={() => onPlayStateChange?.(true)}
+          onPause={() => onPlayStateChange?.(false)}
+          onEnded={() => onPlayStateChange?.(false)}
         />
       )}
 
-      {/* プレビューヘッダー */}
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md bg-cyan-500/20 text-cyan-400">
-            <Video size={14} />
-          </div>
-          <span className="text-xs font-bold text-slate-200">3Dカメラプレビュー</span>
-          <span className="rounded bg-cyan-950 px-1.5 py-0.5 text-[10px] font-medium text-cyan-400 border border-cyan-800/40">
-            サイバーボーン
-          </span>
-        </div>
-
-        {/* 視点切り替えボタン */}
-        <button
-          type="button"
-          onClick={() => setViewMode(viewMode === 'camera' ? 'free' : 'camera')}
-          className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
-            viewMode === 'camera'
-              ? 'border border-cyan-500/40 bg-cyan-500/10 text-cyan-300'
-              : 'border border-cyan-500/80 bg-cyan-950/60 text-cyan-300 shadow-sm'
-          }`}
-        >
-          <Eye size={13} />
-          {viewMode === 'camera' ? '生成カメラ視点' : 'ディレクターズ視点（カメラを可視化）'}
-        </button>
-      </div>
-
-      {/* 3Dキャンバス領域 (縦画面 9:16 比率) */}
-      <div className="relative mx-auto flex h-[480px] w-full max-w-[270px] items-center justify-center overflow-hidden rounded-xl border border-slate-700/60 bg-black shadow-2xl">
+      {/* 【修正】 w-[242px] h-[430px] shrink-0 で絶対に潰れないように固定！ */}
+      <div className="relative flex h-[430px] w-[242px] shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-700/60 bg-black shadow-2xl">
         <div ref={containerRef} className="h-full w-full" />
 
-        {/* 画面内オーバーレイ */}
-        <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-slate-900/80 px-2 py-1 text-[10px] font-mono text-cyan-400 backdrop-blur-sm border border-slate-700/40">
-          FRAME: {Math.floor(currentTime * FPS)}
-          {/* 【新設】現在のカット名表示 */}
+        {/* 画面内オーバーレイ左上：FRAME ＆ 現在のカット名 */}
+        <div className="pointer-events-none absolute left-2.5 top-2.5 flex flex-col gap-0.5 rounded-lg bg-slate-900/85 px-2.5 py-1.5 text-[9px] font-mono text-cyan-400 backdrop-blur-md border border-slate-700/40">
+          <div>FRAME: {Math.floor(currentTime * FPS)}</div>
           {(() => {
             const curCut = [...cuts].reverse().find((c) => c.time <= currentTime + 0.05);
             return curCut ? (
-              <div className="text-[11px] font-bold text-white">
+              <div className="text-[10px] font-bold text-white">
                 #{curCut.index + 1} {curCut.pattern.toUpperCase()}
               </div>
             ) : null;
           })()}
         </div>
 
+        {/* 画面内オーバーレイ右上：視点切り替えボタン */}
+        <button
+          type="button"
+          onClick={() => setViewMode(viewMode === 'camera' ? 'free' : 'camera')}
+          className={`absolute right-2.5 top-2.5 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium backdrop-blur-md transition-all shadow-md ${
+            viewMode === 'camera'
+              ? 'bg-slate-900/80 text-cyan-300 border border-cyan-500/40 hover:bg-slate-800'
+              : 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/80 shadow-cyan-500/20'
+          }`}
+          title="カメラ視点を切り替え"
+        >
+          <Eye size={12} />
+          <span>{viewMode === 'camera' ? '生成カメラ' : '全体視点'}</span>
+        </button>
+
         {viewMode === 'free' && (
-          <div className="pointer-events-none absolute bottom-3 left-3 right-3 rounded bg-slate-900/85 px-2 py-1 text-center text-[10px] text-cyan-300/90 border border-cyan-800/40">
-            四角錐のワイヤー枠＝生成されたカメラ
+          <div className="pointer-events-none absolute bottom-2.5 left-2.5 right-2.5 rounded-md bg-slate-900/90 px-2 py-1 text-center text-[9px] text-cyan-300/90 border border-cyan-800/40 backdrop-blur-sm">
+            四角錐枠＝カメラ位置
           </div>
         )}
-      </div>
-
-      {/* タイムバー・コントローラー */}
-      <div className="mt-4 space-y-2">
-        <div className="flex items-center gap-2">
-          <span className="w-12 text-right font-mono text-[10px] text-slate-400">
-            {formatTime(currentTime)}
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={duration || 1}
-            step={0.01}
-            value={currentTime}
-            onChange={handleSeek}
-            className="flex-1 accent-cyan-500"
-          />
-          <span className="w-12 font-mono text-[10px] text-slate-500">
-            {formatTime(duration)}
-          </span>
-        </div>
-
-        <div className="flex items-center justify-center gap-3 pt-1">
-          <button
-            type="button"
-            onClick={handleReset}
-            className="rounded-lg border border-slate-700/50 p-2 text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-200"
-            title="最初に戻る"
-          >
-            <RotateCcw size={15} />
-          </button>
-          <button
-            type="button"
-            onClick={togglePlay}
-            className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-lg shadow-cyan-500/20 transition-all hover:brightness-110 active:scale-95"
-            title={isPlaying ? '一時停止 (Space)' : '再生 (Space)'}
-          >
-            {isPlaying ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
-          </button>
-        </div>
       </div>
     </div>
   );
