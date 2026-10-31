@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Video,
   Clapperboard,
@@ -8,6 +8,8 @@ import {
   RotateCcw,
   ChevronDown,
   CheckCircle2,
+  Save,
+  FolderOpen,
 } from 'lucide-react';
 import packageJson from '../package.json';
 import { DropZone } from '@/components/DropZone';
@@ -17,7 +19,8 @@ import { ProgressBar } from '@/components/ProgressBar';
 import { CameraPreview } from '@/components/CameraPreview';
 import { analyzeAudio } from '@/lib/audio';
 import { parseVMD, writeCameraVMD } from '@/lib/vmd';
-import { generateCameraMotion, downloadVMD, type GenerationResult} from '@/lib/camera';
+import { generateCameraMotion, downloadVMD, type GenerationResult } from '@/lib/camera';
+import { exportProject, importProject, type ProjectData } from '@/lib/project';
 import type {
   AudioAnalysisResult,
   CameraGenerationOptions,
@@ -29,19 +32,27 @@ import type {
 type AppPhase = 'idle' | 'analyzing' | 'generating' | 'done' | 'error';
 
 export default function App() {
+  // ------------------------------------------------------------
+  // 1. ファイルおよび解析データの状態管理 (Model State)
+  // ------------------------------------------------------------
   const [vmdFile, setVmdFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [vmdParseResult, setVmdParseResult] = useState<VMDParseResult | null>(null);
   const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysisResult | null>(null);
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
 
+  // ------------------------------------------------------------
+  // 2. UI・処理進行状態の管理 (UI State)
+  // ------------------------------------------------------------
   const [phase, setPhase] = useState<AppPhase>('idle');
   const [errorMsg, setErrorMsg] = useState('');
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState('');
   const [showSettings, setShowSettings] = useState(true);
 
-  // タイムライン・プレビュー連携 State
+  // ------------------------------------------------------------
+  // 3. タイムライン・プレビュー連携状態 (Playback State)
+  // ------------------------------------------------------------
   const [selectedCutIndex, setSelectedCutIndex] = useState<number | null>(null);
   const [seekRequest, setSeekRequest] = useState<{ time: number; nonce: number } | null>(null);
   const [previewTime, setPreviewTime] = useState(0);
@@ -49,6 +60,9 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playTrigger, setPlayTrigger] = useState(0);
 
+  // ------------------------------------------------------------
+  // 4. カメラ生成オプション設定
+  // ------------------------------------------------------------
   const [options, setOptions] = useState<CameraGenerationOptions>({
     cameraMode: 'auto',
     beatSensitivity: 0.6,
@@ -63,7 +77,25 @@ export default function App() {
   });
 
   const generatedBufferRef = useRef<ArrayBuffer | null>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
 
+  // ------------------------------------------------------------
+  // 5. 算出プロパティ (ボタンの活性・非活性条件)
+  // ------------------------------------------------------------
+  const isWorking = phase === 'analyzing' || phase === 'generating';
+  const canGenerate = vmdFile !== null && audioFile !== null && !isWorking;
+  // 保存ボタン: カメラ生成が完了している場合のみ活性
+  const canExport = phase === 'done' && generationResult !== null && !isWorking;
+  // 読込ボタン: VMDと音声の両方がセットされている場合のみ活性（未選択時の破損を防ぐ）
+  const canImport = vmdFile !== null && audioFile !== null && !isWorking;
+
+  // ------------------------------------------------------------
+  // 6. イベントハンドラ群 (Controller Logic)
+  // ------------------------------------------------------------
+
+  /**
+   * アプリケーションの状態を初期化（エラーメッセージも完全消去）
+   */
   const reset = useCallback(() => {
     setVmdFile(null);
     setAudioFile(null);
@@ -82,7 +114,11 @@ export default function App() {
     generatedBufferRef.current = null;
   }, []);
 
+  /**
+   * VMDファイル選択処理（エラーをクリア）
+   */
   const handleVmdSelect = useCallback(async (file: File) => {
+    setErrorMsg('');
     setVmdFile(file);
     try {
       const buffer = await file.arrayBuffer();
@@ -94,18 +130,26 @@ export default function App() {
     }
   }, []);
 
+  /**
+   * 音声ファイル選択処理（エラーをクリア）
+   */
   const handleAudioSelect = useCallback((file: File) => {
+    setErrorMsg('');
     setAudioFile(file);
     setAudioAnalysis(null);
     setGenerationResult(null);
     setPhase('idle');
   }, []);
 
+  /**
+   * カメラモーション生成パイプライン（開始時にエラーメッセージを必ずクリア）
+   */
   const handleGenerate = useCallback(async () => {
     if (!audioFile || !vmdFile) return;
 
-    setPhase('analyzing');
+    // 【改善】生成開始時に古いエラーメッセージを必ず完全にクリア
     setErrorMsg('');
+    setPhase('analyzing');
     setProgress(0);
     setProgressLabel('音声を解析中...');
 
@@ -148,12 +192,18 @@ export default function App() {
     }
   }, [audioFile, vmdFile, vmdParseResult, options, generationResult]);
 
+  /**
+   * 生成されたVMDファイルをローカルにダウンロード
+   */
   const handleDownload = useCallback(() => {
     if (!generatedBufferRef.current) return;
     const baseName = audioFile?.name.replace(/\.[^.]+$/, '') ?? 'camera';
     downloadVMD(generatedBufferRef.current, `camera_${baseName}.vmd`);
   }, [audioFile]);
 
+  /**
+   * 指定カットのロック状態切り替え
+   */
   const handleToggleLock = useCallback((cutIndex: number) => {
     setGenerationResult((prev) => {
       if (!prev) return null;
@@ -164,6 +214,9 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * 指定カットのカメラパターンを手動変更し、即座にVMDデータを再計算
+   */
   const handleChangePattern = useCallback(
     (cutIndex: number, newPattern: CameraPattern) => {
       if (!audioAnalysis) return;
@@ -191,6 +244,9 @@ export default function App() {
     [audioAnalysis, vmdParseResult, options]
   );
 
+  /**
+   * タイムラインまたはカードクリック時のカット選択＆ジャンプ
+   */
   const handleSelectCut = useCallback((cut: CutInfo) => {
     setSelectedCutIndex(cut.index);
     setSeekRequest({ time: cut.time, nonce: Date.now() });
@@ -211,11 +267,109 @@ export default function App() {
     setSeekRequest({ time: 0, nonce: Date.now() });
   }, []);
 
-  const isWorking = phase === 'analyzing' || phase === 'generating';
-  const canGenerate = vmdFile !== null && audioFile !== null && !isWorking;
+  // ============================================================
+  // プロジェクト保存・読み込み処理 (確定仕様)
+  // ============================================================
 
+  /**
+   * 現在の設定およびカット構成をJSONファイルとして保存（生成完了時のみ実行可能）
+   */
+  const handleExportProject = useCallback(() => {
+    if (!canExport || !generationResult) return;
+
+    const projectData: ProjectData = {
+      formatVersion: '1.0',
+      createdAt: new Date().toISOString(),
+      audioFileName: audioFile?.name,
+      vmdFileName: vmdFile?.name,
+      options,
+      cuts: generationResult.cuts,
+    };
+    exportProject(projectData, audioFile?.name ?? 'camera');
+  }, [canExport, audioFile, vmdFile, options, generationResult]);
+
+  /**
+   * 設定ファイルを読み込み、即座にカメラモーションを完全自動再生成して画面と同期
+   */
+  const handleImportFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !audioFile || !vmdFile) return;
+
+      try {
+        setErrorMsg(''); // 読み込み開始時にエラーをクリア
+        const projectData = await importProject(file);
+
+        // 1. ファイル名照合チェック（別のファイルが開かれている場合の警告）
+        const isAudioMismatch = projectData.audioFileName && audioFile.name !== projectData.audioFileName;
+        const isVmdMismatch = projectData.vmdFileName && vmdFile.name !== projectData.vmdFileName;
+
+        if (isAudioMismatch || isVmdMismatch) {
+          const warningMsg =
+            `現在のファイルと、プロジェクト保存時のファイルが異なります。\n\n` +
+            `【保存時のファイル】\n` +
+            `・音声: ${projectData.audioFileName ?? '未記録'}\n` +
+            `・VMD: ${projectData.vmdFileName ?? '未記録'}\n\n` +
+            `このまま読み込むと、カメラワークのタイミングがズレる可能性があります。続行しますか？`;
+
+          if (!window.confirm(warningMsg)) return;
+        }
+
+        // 2. カメラ設定オプションの更新
+        const newOptions: CameraGenerationOptions = {
+          ...projectData.options,
+          existingCuts: projectData.cuts,
+        };
+        setOptions(newOptions);
+
+        // 3. 【最重要】設定ファイルの内容で即座にカメラモーションを完全再生成！
+        setPhase('generating');
+        setProgressLabel('設定ファイルの内容でタイムラインを再構築中...');
+        setProgress(0.5);
+
+        // 音声解析がまだ無ければ実行、あればキャッシュを利用
+        let currentAnalysis = audioAnalysis;
+        if (!currentAnalysis) {
+          currentAnalysis = await analyzeAudio(audioFile, newOptions.beatSensitivity, newOptions.cutInterval);
+          setAudioAnalysis(currentAnalysis);
+        }
+
+        const newResult = generateCameraMotion(
+          currentAnalysis,
+          vmdParseResult?.data ?? null,
+          newOptions
+        );
+
+        setGenerationResult(newResult);
+        generatedBufferRef.current = writeCameraVMD(newResult.cameraFrames);
+        setProgress(1);
+        setProgressLabel('完了');
+        setPhase('done');
+      } catch (err) {
+        console.error('[Project] Import error:', err);
+        setErrorMsg(err instanceof Error ? err.message : 'プロジェクトの読み込みに失敗しました。');
+        setPhase('error');
+      } finally {
+        e.target.value = '';
+      }
+    },
+    [audioFile, vmdFile, audioAnalysis, vmdParseResult]
+  );
+
+  // ------------------------------------------------------------
+  // 7. レンダリング (View)
+  // ------------------------------------------------------------
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#0a0e17] text-slate-200">
+      {/* 隠しプロジェクトファイル入力 input */}
+      <input
+        ref={projectInputRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={handleImportFileChange}
+      />
+
       {/* 背景装飾 */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div
@@ -248,12 +402,38 @@ export default function App() {
           </div>
         </div>
 
-        {/* ヘッダー右側アクション（リセット ＆ 将来の保存/読込等の拡張枠） */}
+        {/* ヘッダー右側アクション（保存・読込の活性/非活性を厳密制御 ＆ リセット） */}
         <div className="flex items-center gap-2">
+          {/* プロジェクト保存ボタン（カメラ生成完了時のみ活性化） */}
+          <button
+            type="button"
+            onClick={handleExportProject}
+            disabled={!canExport}
+            className="flex items-center gap-1.5 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700/60 disabled:hover:text-slate-300"
+            title={canExport ? '現在のカメラ設定とカット構成をJSONファイルとして保存' : 'カメラモーション生成後に保存できます'}
+          >
+            <Save size={13} className="text-cyan-400" />
+            <span>保存</span>
+          </button>
+
+          {/* プロジェクト読込ボタン（VMDと音声をセット後のみ活性化） */}
+          <button
+            type="button"
+            onClick={() => projectInputRef.current?.click()}
+            disabled={!canImport}
+            className="flex items-center gap-1.5 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700/60 disabled:hover:text-slate-300"
+            title={canImport ? '保存したJSONファイルを読み込んで設定とカット構成を完全再現' : 'VMDと音声をセットすると読込可能になります'}
+          >
+            <FolderOpen size={13} className="text-cyan-400" />
+            <span>読込</span>
+          </button>
+
+          {/* リセットボタン */}
           <button
             type="button"
             onClick={reset}
-            className="flex items-center gap-1 rounded-md border border-slate-700/60 bg-slate-800/60 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-slate-500 hover:text-white"
+            className="flex items-center gap-1 rounded-md border border-slate-700/60 bg-slate-800/40 px-2.5 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-white"
+            title="すべて初期状態にリセット"
           >
             <RotateCcw size={13} />
             <span>リセット</span>
@@ -266,6 +446,7 @@ export default function App() {
       {/* ======================================================== */}
       <main className="relative z-10 flex-1 overflow-y-auto p-3 sm:p-4">
         <div className="mx-auto grid max-w-7xl gap-4 md:grid-cols-[260px_1fr]">
+          {/* 左カラム：大画面3Dプレビューモニター */}
           <div className="flex flex-col items-center justify-start w-[260px] shrink-0">
             {generationResult ? (
               <CameraPreview
