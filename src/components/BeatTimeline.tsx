@@ -63,6 +63,7 @@ const PATTERN_COLORS: Record<CameraPattern, string> = {
   dolly: '#06b6d4',
   dutch_angle: '#ec4899',
   tilt_up: '#eab308',
+  snap_dolly: '#f43f5e',
 };
 
 const PATTERN_LABELS: Record<CameraPattern, string> = {
@@ -74,6 +75,7 @@ const PATTERN_LABELS: Record<CameraPattern, string> = {
   dolly: 'ドリー',
   dutch_angle: 'ダッチ',
   tilt_up: 'ティルト',
+  snap_dolly: 'スナップ',
 };
 
 // ============================================================
@@ -212,11 +214,10 @@ export function BeatTimeline({
           <button
             type="button"
             onClick={() => setShowWaveform(!showWaveform)}
-            className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-all ${
-              showWaveform
+            className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-all ${showWaveform
                 ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
                 : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200 border border-slate-700/50'
-            }`}
+              }`}
             title="エネルギー波形の表示/非表示を切り替え"
           >
             <Activity size={12} />
@@ -283,19 +284,17 @@ export function BeatTimeline({
                       onClick={() => onSelectCut?.(cut)}
                       className="group absolute bottom-0 top-0 flex cursor-pointer flex-col items-center justify-end"
                       style={{ left: `${pct}%`, transform: 'translateX(-50%)' }}
-                      title={`#${cut.index + 1} (${cut.time.toFixed(2)}秒): ${
-                        PATTERN_LABELS[cut.pattern] ?? cut.pattern
-                      }${cut.isLocked ? ' [固定中]' : ''}（クリックでジャンプ）`}
+                      title={`#${cut.index + 1} (${cut.time.toFixed(2)}秒): ${PATTERN_LABELS[cut.pattern] ?? cut.pattern
+                        }${cut.isLocked ? ' [固定中]' : ''}（クリックでジャンプ）`}
                     >
                       {cut.isLocked && (
                         <div className="mb-0.5 h-1 w-1 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400" />
                       )}
                       <div
-                        className={`rounded-t transition-all ${
-                          isSelected
+                        className={`rounded-t transition-all ${isSelected
                             ? 'w-2.5 ring-2 ring-white brightness-125'
                             : 'w-1.5 group-hover:scale-y-110 group-hover:brightness-110'
-                        }`}
+                          }`}
                         style={{
                           backgroundColor: color,
                           height: '100%',
@@ -352,15 +351,14 @@ export function BeatTimeline({
                       else cardRefs.current.delete(cut.index);
                     }}
                     onClick={() => onSelectCut?.(cut)}
-                    className={`flex min-w-[125px] cursor-pointer flex-col justify-between rounded-lg border p-2 transition-all ${
-                      isSelected
+                    className={`flex min-w-[125px] cursor-pointer flex-col justify-between rounded-lg border p-2 transition-all ${isSelected
                         ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-500/20 ring-2 ring-cyan-400'
                         : isPlayingCut
-                        ? 'border-red-500/80 bg-red-950/20 shadow-md shadow-red-500/10'
-                        : isLocked
-                        ? 'border-cyan-500/60 bg-cyan-950/20 shadow-sm shadow-cyan-500/10 hover:border-cyan-400'
-                        : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/60'
-                    }`}
+                          ? 'border-red-500/80 bg-red-950/20 shadow-md shadow-red-500/10'
+                          : isLocked
+                            ? 'border-cyan-500/60 bg-cyan-950/20 shadow-sm shadow-cyan-500/10 hover:border-cyan-400'
+                            : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/60'
+                      }`}
                   >
                     <div className="flex items-center justify-between text-[11px]">
                       <div className="flex items-center gap-1">
@@ -400,11 +398,10 @@ export function BeatTimeline({
                         e.stopPropagation();
                         onToggleLock?.(cut.index);
                       }}
-                      className={`flex w-full items-center justify-center gap-1 rounded py-0.5 text-[10px] font-medium transition-all ${
-                        isLocked
+                      className={`flex w-full items-center justify-center gap-1 rounded py-0.5 text-[10px] font-medium transition-all ${isLocked
                           ? 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
                           : 'bg-slate-700/30 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
-                      }`}
+                        }`}
                     >
                       {isLocked ? (
                         <>

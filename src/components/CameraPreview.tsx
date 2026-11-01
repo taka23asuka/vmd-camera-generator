@@ -503,7 +503,6 @@ export function CameraPreview({
 {/* src/components/CameraPreview.tsx の return 部分 */}
 
   return (
-    /* 【修正】 w-full flex justify-center で親の幅を確保 */
     <div className="relative w-full flex justify-center">
       {/* 隠し audio 要素 */}
       {audioUrl && (
@@ -521,7 +520,6 @@ export function CameraPreview({
         />
       )}
 
-      {/* 【修正】 w-[242px] h-[430px] shrink-0 で絶対に潰れないように固定！ */}
       <div className="relative flex h-[430px] w-[242px] shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-700/60 bg-black shadow-2xl">
         <div ref={containerRef} className="h-full w-full" />
 

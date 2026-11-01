@@ -8,10 +8,10 @@ export const highangleStrategy: CameraPatternStrategy = {
   name: '俯瞰',
   category: 'angle',
   baseWeight: 15,
-  createStartKeyframe: ({ target, baseDistance, baseFov, params }) => {
+  createStartKeyframe: ({ target, baseDistance, baseFov, params, intensity }) => {
     const config = {
       targetYOffset: -1.0,
-      sideAngle: 0.55,
+      sideAngle: 0.55 * Math.min(1.4, intensity),
       rotX: 0.40,
       distanceMul: 1.25,
       fovOffset: 2,
@@ -24,14 +24,14 @@ export const highangleStrategy: CameraPatternStrategy = {
       fov: baseFov + config.fovOffset,
     };
   },
-  createEndKeyframe: ({ target, params }, startKf) => {
+  createEndKeyframe: ({ target, params, intensity }, startKf) => {
     const config = {
       targetYOffset: -1.0,
-      verticalDrift: 2.0,
-      sideAngle: 0.55,
+      verticalDrift: 2.0 * intensity,
+      sideAngle: 0.55 * Math.min(1.4, intensity),
       rotX: 0.40,
-      tiltDrift: 0.08,
-      dollyShift: 0.12,
+      tiltDrift: 0.08 * intensity,
+      dollyShift: 0.12 * intensity,
     };
     return {
       frame: 0,

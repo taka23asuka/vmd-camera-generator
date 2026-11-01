@@ -67,13 +67,24 @@ export default function App() {
     cameraMode: 'auto',
     beatSensitivity: 0.6,
     cutInterval: 1.5,
-    patterns: ['wide', 'closeup', 'highangle', 'lowangle', 'orbit', 'dolly', 'dutch_angle', 'tilt_up'],
+    patterns: [
+      'wide',
+      'closeup',
+      'highangle',
+      'lowangle',
+      'orbit',
+      'dolly',
+      'dutch_angle',
+      'tilt_up',
+      'snap_dolly',
+    ],
     transitions: [],
     lookAtBone: 'センター',
     baseDistance: 45,
     closeupDistance: 18,
     fov: 30,
     eyeHeight: 15,
+    intensity: 1.0,
   });
 
   const generatedBufferRef = useRef<ArrayBuffer | null>(null);
@@ -546,11 +557,10 @@ export default function App() {
                 type="button"
                 onClick={handleGenerate}
                 disabled={!canGenerate}
-                className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${
-                  canGenerate
-                    ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-md shadow-cyan-500/20 hover:brightness-110 active:scale-[0.98]'
-                    : 'cursor-not-allowed bg-slate-800/50 text-slate-600'
-                }`}
+                className={`flex w-full items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-xs font-bold transition-all ${canGenerate
+                  ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-md shadow-cyan-500/20 hover:brightness-110 active:scale-[0.98]'
+                  : 'cursor-not-allowed bg-slate-800/50 text-slate-600'
+                  }`}
               >
                 <Sparkles size={15} />
                 {isWorking ? '生成中...' : 'カメラモーションを生成'}
@@ -561,8 +571,8 @@ export default function App() {
                   {!vmdFile && !audioFile
                     ? 'VMDファイルと音声ファイルを両方アップロードしてください'
                     : !vmdFile
-                    ? 'ダンスモーション（VMD）をアップロードしてください'
-                    : '音声ファイルをアップロードしてください'}
+                      ? 'ダンスモーション（VMD）をアップロードしてください'
+                      : '音声ファイルをアップロードしてください'}
                 </p>
               )}
 

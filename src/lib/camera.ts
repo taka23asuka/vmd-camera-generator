@@ -25,9 +25,6 @@ const FPS = 30;
 // ユーティリティ & ランダム関数
 // ============================================================
 
-/**
- * カットごとのランダム方向パラメータを生成
- */
 function randomCutParams(): CutMotionParams {
   const rand = () => (Math.random() < 0.5 ? 1 : -1);
   return {
@@ -39,25 +36,16 @@ function randomCutParams(): CutMotionParams {
   };
 }
 
-/**
- * トランジションアウト用：最後に向かって急激に加速して画面を流す/回転する補間曲線 (Ease-In)
- */
 function easeInCameraInterpolation(): number[] {
   const easeIn = [80, 127, 0, 60];
   return [...easeIn, ...easeIn, ...easeIn, ...easeIn, ...easeIn, ...easeIn];
 }
 
-/**
- * トランジションイン用：最高速度で突入し、定位置でクッションを利かせてピタッと止まる補間曲線 (Ease-Out)
- */
 function easeOutCameraInterpolation(): number[] {
   const easeOut = [0, 47, 60, 127];
   return [...easeOut, ...easeOut, ...easeOut, ...easeOut, ...easeOut, ...easeOut];
 }
 
-/**
- * 追従ボーンの種類に応じた基準高さオフセット（頭・首・上半身の二重加算防止）
- */
 function getBoneHeightOffset(boneName: string, eyeHeight: number): number {
   const lower = boneName.toLowerCase();
   if (boneName.includes('頭') || boneName.includes('目') || lower.includes('head') || lower.includes('eye')) return 0;
@@ -67,9 +55,6 @@ function getBoneHeightOffset(boneName: string, eyeHeight: number): number {
   return eyeHeight;
 }
 
-/**
- * 指定時間区間における楽曲の平均エネルギー（RMS音量 0.0〜1.0）を算出
- */
 function getSegmentEnergy(energyCurve: number[] | undefined, startTime: number, endTime: number): number {
   if (!energyCurve || energyCurve.length === 0) return 0.5;
   const startIndex = Math.max(0, Math.floor(startTime / 0.02));
@@ -81,9 +66,6 @@ function getSegmentEnergy(energyCurve: number[] | undefined, startTime: number, 
   return sum / (endIndex - startIndex + 1);
 }
 
-/**
- * ショート動画向け：第1カットのフック（寄り確定）および音量・テンポ連動の重み付け抽選
- */
 function selectPatternWithEnergy(
   cutIdx: number,
   startTime: number,
@@ -105,7 +87,9 @@ function selectPatternWithEnergy(
 
   const cutDuration = Math.max(0.1, endTime - startTime);
 
+  // サビ・盛り上がり時にスナップドリーとドリーを大幅ブースト
   if (energy > 0.6) {
+    if (weights.snap_dolly) weights.snap_dolly *= 2.6; // サビ頭やドロップで強烈に当たる
     if (weights.dolly) weights.dolly *= 2.4;
     if (weights.lowangle) weights.lowangle *= 2.0;
     if (weights.dutch_angle) weights.dutch_angle *= 1.8;
@@ -119,10 +103,12 @@ function selectPatternWithEnergy(
     if (weights.wide) weights.wide *= 1.8;
     if (weights.orbit) weights.orbit *= 1.2;
     if (weights.dolly) weights.dolly *= 0.4;
+    if (weights.snap_dolly) weights.snap_dolly *= 0.2; // 静かなパートでは控えめに
     if (weights.lowangle) weights.lowangle *= 0.5;
   }
 
   if (cutDuration < 1.8) {
+    if (weights.snap_dolly) weights.snap_dolly *= 2.0;
     if (weights.closeup) weights.closeup *= 1.5;
     if (weights.dolly) weights.dolly *= 1.5;
     if (weights.lowangle) weights.lowangle *= 1.3;
@@ -131,6 +117,7 @@ function selectPatternWithEnergy(
     if (weights.orbit) weights.orbit *= 2.0;
     if (weights.wide) weights.wide *= 1.6;
     if (weights.closeup) weights.closeup *= 0.7;
+    if (weights.snap_dolly) weights.snap_dolly *= 0.5;
   }
 
   if (lastPattern) weights[lastPattern] = 0;
@@ -160,7 +147,7 @@ function selectPatternWithEnergy(
 }
 
 // ============================================================
-// 正面固定モード（モーション配布・確認用）
+// 正面固定モード
 // ============================================================
 
 function generateFixedFrontMotion(
@@ -249,9 +236,6 @@ export interface GenerationResult {
   cuts: CutInfo[];
 }
 
-/**
- * 音声解析結果およびダンスモーションデータから、MMDカメラモーションを生成する
- */
 export function generateCameraMotion(
   audio: AudioAnalysisResult,
   vmdData: VMDData | null,
@@ -260,19 +244,10 @@ export function generateCameraMotion(
 ): GenerationResult {
   const totalFrames = Math.ceil(audio.duration * FPS);
 
-  // 正面固定モードの分岐
-  const isFixedFront =
-    options.cameraMode === 'fixed_front' ||
-    (options as { mode?: string }).mode === 'fixed_front' ||
-    options.patterns.includes('fixed_front' as CameraPattern);
-
-  if (isFixedFront) {
+  if (options.cameraMode === 'fixed_front') {
     return generateFixedFrontMotion(totalFrames, vmdData, options, onProgress);
   }
 
-  // ------------------------------------------------------------
-  // 通常モード（カット割り ＆ 楽曲連動）
-  // ------------------------------------------------------------
   const smoothInterp = defaultCameraInterpolation();
   const cutInterp = linearCameraInterpolation();
   const easeInInterp = easeInCameraInterpolation();
@@ -330,11 +305,7 @@ export function generateCameraMotion(
       ? options.patterns.filter((p) => p !== ('fixed_front' as CameraPattern))
       : (Object.keys(CAMERA_STRATEGIES) as CameraPattern[]);
 
-  const minCutDuration =
-    (options as { minCutDuration?: number; minCutInterval?: number }).minCutDuration ??
-    (options as { minCutDuration?: number; minCutInterval?: number }).minCutInterval ??
-    options.cutInterval ??
-    1.5;
+  const minCutDuration = options.cutInterval ?? 1.5;
   const minCutFrames = Math.max(Math.round(minCutDuration * FPS), 15);
 
   const validCutFrames: { frame: number; time: number }[] = [];
@@ -349,7 +320,6 @@ export function generateCameraMotion(
     }
   }
 
-  // カット定義の構築
   interface CutDef {
     startFrame: number;
     endFrame: number;
@@ -378,7 +348,6 @@ export function generateCameraMotion(
 
     const segmentEnergy = getSegmentEnergy(audio.energyCurve, startTime, endTime);
 
-    // ロック判定ロジック
     const existing = options.existingCuts?.[i];
     const isLocked = existing?.isLocked ?? false;
 
@@ -423,7 +392,7 @@ export function generateCameraMotion(
     usageMap.set(pattern, (usageMap.get(pattern) ?? 0) + 1);
   }
 
-  // トランジション（ウィップ / スピン）の厳選判定
+  // トランジション判定
   const activeTransitions = options.transitions ?? [];
   let lastTransitionCutIndex = -999;
 
@@ -451,15 +420,13 @@ export function generateCameraMotion(
         curCut.transitionType = chosenType;
         curCut.transitionDir = dir;
         lastTransitionCutIndex = i;
-
-        console.log(
-          `[Camera] Transition [${chosenType.toUpperCase()}] Triggered at Cut ${i} (${curCut.pattern}) -> ${i + 1} (${nextCut.pattern})`
-        );
       }
     }
   }
 
-  // キーフレーム生成 (通常補間 + トランジション注入)
+  // ============================================================
+  // キーフレーム生成 (スナップドリーの3点キーフレーム対応)
+  // ============================================================
   const keyframePoints: CameraKeyframe[] = [];
 
   for (let c = 0; c < cutDefs.length; c++) {
@@ -469,12 +436,15 @@ export function generateCameraMotion(
     const startLookAt = getLookAt(cut.startFrame);
     const endLookAt = getLookAt(cut.endFrame);
 
+    const intensity = options.intensity ?? 1.0;
+
     const startCtx: PatternContext = {
       target: startLookAt,
       baseDistance: options.baseDistance,
       baseFov: options.fov,
       params: cut.params,
       closeupDistance: options.closeupDistance,
+      intensity,
     };
 
     const startState = strategy.createStartKeyframe(startCtx);
@@ -494,7 +464,7 @@ export function generateCameraMotion(
     const SWIPE_OFFSET_X = 14.0;
     const SPIN_ANGLE_Z = Math.PI * 0.5;
 
-    // 1. カット開始側のキーフレーム生成 (IN)
+    // 1. カット開始キーフレーム
     if (prevTransition) {
       const isWhip = prevTransition.type === 'whip';
       keyframePoints.push({
@@ -525,7 +495,31 @@ export function generateCameraMotion(
       });
     }
 
-    // 2. カット終了側のキーフレーム生成 (OUT)
+    // ========================================================
+    // スナップドリー：約0.25秒（7〜8フレーム）で急突入し、余韻をつけてキープ！
+    // ========================================================
+    if (cut.pattern === 'snap_dolly') {
+      const cutLength = cut.endFrame - cut.startFrame;
+      // カット尺に合わせて 6〜8フレーム（約0.25秒）で急接近を完了させる
+      const SNAP_FRAMES = Math.min(8, Math.max(6, Math.floor(cutLength * 0.25)));
+      const snapArrivalFrame = cut.startFrame + SNAP_FRAMES;
+      const snapLookAt = getLookAt(snapArrivalFrame);
+
+      // 8フレーム目で全体の約92%まで一気に突入！
+      const distDiff = endState.distance - startState.distance;
+      const snapDistance = startState.distance + distDiff * 0.92;
+
+      // 急突入の完了キーフレーム
+      keyframePoints.push({
+        ...endState,
+        target: snapLookAt,
+        distance: snapDistance,
+        frame: snapArrivalFrame,
+        hardCut: false, // ここから終点までは残り8%をジワッと押し込む余韻
+      });
+    }
+
+    // 2. カット終了キーフレーム
     if (nextTransition) {
       const isWhip = nextTransition.type === 'whip';
 
@@ -565,6 +559,12 @@ export function generateCameraMotion(
   for (const cut of cutDefs) {
     allowedFrames.add(cut.startFrame);
     allowedFrames.add(cut.endFrame);
+    // スナップドリーの急着地キーを許可
+    if (cut.pattern === 'snap_dolly') {
+      const cutLength = cut.endFrame - cut.startFrame;
+      const snapFrames = Math.min(8, Math.max(6, Math.floor(cutLength * 0.25)));
+      allowedFrames.add(cut.startFrame + snapFrames);
+    }
     if (cut.transitionType) {
       allowedFrames.add(cut.endFrame - 2);
     }
@@ -582,7 +582,7 @@ export function generateCameraMotion(
     .filter((k) => allowedFrames.has(k.frame))
     .sort((a, b) => a.frame - b.frame);
 
-  // VMD CameraFrame への最終変換
+  // VMD CameraFrame への変換
   const cameraFrames: CameraFrame[] = [];
 
   for (let i = 0; i < finalKeyframes.length; i++) {
@@ -609,9 +609,6 @@ export function generateCameraMotion(
   return { cameraFrames, cuts };
 }
 
-/**
- * 生成されたバイナリバッファをブラウザからVMDファイルとしてダウンロード
- */
 export function downloadVMD(buffer: ArrayBuffer, filename: string) {
   const blob = new Blob([buffer], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);

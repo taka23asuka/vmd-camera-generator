@@ -19,6 +19,7 @@ import {
   Video,
   Info,
   Zap,
+  Flame,
 } from 'lucide-react';
 
 // ============================================================
@@ -74,7 +75,7 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
       : [...current, transition];
     onChange({ ...options, transitions: newTransitions });
   };
-  
+
   return (
     <div className={`space-y-5 ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
       {/* ---------------------------------------------------- */}
@@ -87,11 +88,10 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
             type="button"
             disabled={disabled}
             onClick={() => onChange({ ...options, cameraMode: 'auto' })}
-            className={`flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all ${
-              !isFixedFront
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
+            className={`flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all ${!isFixedFront
+              ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
+              }`}
           >
             <Sparkles size={13} />
             自動演出
@@ -100,11 +100,10 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
             type="button"
             disabled={disabled}
             onClick={() => onChange({ ...options, cameraMode: 'fixed_front' })}
-            className={`flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all ${
-              isFixedFront
-                ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
+            className={`flex items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-medium transition-all ${isFixedFront
+              ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-white shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
+              }`}
           >
             <Video size={13} />
             正面固定
@@ -176,6 +175,23 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
             disabled={disabled}
           />
         </>
+      )}
+
+      {/* カメラの激しさ（振幅）スライダー */}
+      {!isFixedFront && (
+        <SliderField
+          label="カメラの激しさ（振幅）"
+          icon={<Flame size={14} className="text-cyan-400" />}
+          value={options.intensity ?? 1.0}
+          displayValue={`${Math.round((options.intensity ?? 1.0) * 100)}%`}
+          min={0.3}
+          max={2.0}
+          step={0.05}
+          onChange={(val) => onChange({ ...options, intensity: val })}
+          disabled={disabled}
+          leftHint="控えめ (30%)"
+          rightHint="激しい (200%)"
+        />
       )}
 
       {/* ---------------------------------------------------- */}
@@ -255,11 +271,10 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
                   type="button"
                   onClick={() => togglePattern(p.type)}
                   disabled={disabled}
-                  className={`rounded-lg border px-3 py-2 text-left transition-all ${
-                    active
-                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
-                      : 'border-slate-700/40 bg-slate-800/30 text-slate-500 hover:border-slate-600/50'
-                  } disabled:cursor-not-allowed`}
+                  className={`rounded-lg border px-3 py-2 text-left transition-all ${active
+                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
+                    : 'border-slate-700/40 bg-slate-800/30 text-slate-500 hover:border-slate-600/50'
+                    } disabled:cursor-not-allowed`}
                 >
                   <p className="text-xs font-medium">{p.label}</p>
                   <p className="mt-0.5 text-[10px] opacity-70">{p.description}</p>
@@ -293,11 +308,10 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
                   type="button"
                   onClick={() => toggleTransition(t.type)}
                   disabled={disabled}
-                  className={`rounded-lg border px-3 py-2 text-left transition-all ${
-                    active
-                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
-                      : 'border-slate-700/40 bg-slate-800/30 text-slate-500 hover:border-slate-600/50'
-                  } disabled:cursor-not-allowed`}
+                  className={`rounded-lg border px-3 py-2 text-left transition-all ${active
+                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
+                    : 'border-slate-700/40 bg-slate-800/30 text-slate-500 hover:border-slate-600/50'
+                    } disabled:cursor-not-allowed`}
                 >
                   <p className="text-xs font-medium">{t.label}</p>
                   <p className="mt-0.5 text-[10px] opacity-70">{t.description}</p>

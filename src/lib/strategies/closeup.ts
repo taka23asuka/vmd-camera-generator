@@ -15,11 +15,11 @@ export const closeupStrategy: CameraPatternStrategy = {
     distance: closeupDistance,
     fov: baseFov - 10,
   }),
-  createEndKeyframe: ({ target }, startKf) => ({
+  createEndKeyframe: ({ target, intensity }, startKf) => ({
     frame: 0,
     target: { x: target.x, y: target.y, z: target.z },
     rotation: { x: 0, y: 0, z: 0 },
-    distance: startKf.distance - 0.5,
+    distance: startKf.distance - 0.5 * intensity,
     fov: startKf.fov,
   }),
 };

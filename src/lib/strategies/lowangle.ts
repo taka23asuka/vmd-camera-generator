@@ -8,10 +8,10 @@ export const lowangleStrategy: CameraPatternStrategy = {
   name: 'ローアングル',
   category: 'angle',
   baseWeight: 18,
-  createStartKeyframe: ({ target, baseDistance, baseFov, params }) => {
+  createStartKeyframe: ({ target, baseDistance, baseFov, params, intensity }) => {
     const config = {
       targetYOffset: -5.5,
-      sideAngle: 0.30,
+      sideAngle: 0.30 * Math.min(1.5, intensity),
       rotX: -0.22,
       distanceMul: 0.78,
       fovOffset: 4,
@@ -24,14 +24,14 @@ export const lowangleStrategy: CameraPatternStrategy = {
       fov: baseFov + config.fovOffset,
     };
   },
-  createEndKeyframe: ({ target, baseFov, params }, startKf) => {
+  createEndKeyframe: ({ target, baseFov, params, intensity }, startKf) => {
     const config = {
       targetYOffset: -5.5,
-      verticalDrift: 1.0,
-      sideAngle: 0.30,
+      verticalDrift: 1.0 * intensity,
+      sideAngle: 0.30 * Math.min(1.5, intensity),
       rotX: -0.18,
-      tiltDrift: 0.02,
-      dollyShift: 0.08,
+      tiltDrift: 0.02 * intensity,
+      dollyShift: 0.08 * intensity,
       fovOffset: 4,
     };
     return {

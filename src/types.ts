@@ -91,7 +91,16 @@ export interface AudioAnalysisResult {
 // ============================================================
 
 /** カメラワークパターンの識別子 */
-export type CameraPattern = 'wide' | 'closeup' | 'highangle' | 'lowangle' | 'orbit' | 'dolly' | 'dutch_angle' | 'tilt_up';
+export type CameraPattern =
+  'wide'
+  | 'closeup'
+  | 'highangle'
+  | 'lowangle'
+  | 'orbit'
+  | 'dolly'
+  | 'dutch_angle'
+  | 'tilt_up'
+  | 'snap_dolly';
 
 /** カメラトランジションの識別子 */
 export type CameraTransition = 'whip' | 'spin';
@@ -145,7 +154,7 @@ export interface CameraGenerationOptions {
   /** 自動演出で使用を許可するカメラワークパターン一覧 */
   patterns: CameraPattern[];
   /** 自動演出で使用を許可すカメラトランジション一覧 */
-  transitions?: CameraTransition[]; 
+  transitions?: CameraTransition[];
   /** 既存のカット設定リスト */
   existingCuts?: CutInfo[];
   /** 追従対象とする基準ボーン名 */
@@ -158,6 +167,8 @@ export interface CameraGenerationOptions {
   fov: number;
   /** 目線の高さ（注視点の基準Y座標、デフォルト: 15） */
   eyeHeight: number;
+  /** カメラの激しさ・振幅スケール (0.3〜2.0、デフォルト 1.0) */
+  intensity?: number;
 }
 
 /**
@@ -172,6 +183,7 @@ export const CAMERA_PATTERNS: CameraPatternInfo[] = [
   { type: 'dolly', label: 'ドリー', description: '真っ直ぐ迫る・引くムービングショット', icon: 'Dolly' },
   { type: 'dutch_angle', label: 'ダッチアングル', description: '斜めに傾けたエモいショット', icon: 'RotateCw' },
   { type: 'tilt_up', label: 'ティルトアップ', description: '足元から顔へ見上げるショット', icon: 'ArrowUp' },
+  { type: 'snap_dolly', label: 'スナップドリー', description: '一瞬で顔面へ急接近するアタックショット', icon: 'Zap' },
 ];
 
 /**
@@ -236,6 +248,7 @@ export interface PatternContext {
   baseFov: number;
   params: CutMotionParams;
   closeupDistance: number;
+  intensity: number;
 }
 
 /**

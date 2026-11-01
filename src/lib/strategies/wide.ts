@@ -8,12 +8,12 @@ export const wideStrategy: CameraPatternStrategy = {
   name: '引き',
   category: 'pull',
   baseWeight: 20,
-  createStartKeyframe: ({ target, baseDistance, baseFov, params }) => {
+  createStartKeyframe: ({ target, baseDistance, baseFov, params, intensity }) => {
     const config = {
       targetYOffset: -3.5,
-      panOffset: 1.2,
+      panOffset: 1.2 * intensity,
       rotX: 0.05,
-      rotYOffset: 0.03,
+      rotYOffset: 0.03 * intensity,
       distanceMul: 1.15,
       fovOffset: 2,
     };
@@ -25,15 +25,15 @@ export const wideStrategy: CameraPatternStrategy = {
       fov: baseFov + config.fovOffset,
     };
   },
-  createEndKeyframe: ({ target, baseFov, params }, startKf) => {
+  createEndKeyframe: ({ target, baseFov, params, intensity }, startKf) => {
     const config = {
       targetYOffset: -3.5,
-      panOffset: 1.2,
-      verticalDrift: 1.0,
-      tiltDrift: 0.02,
+      panOffset: 1.2 * intensity,
+      verticalDrift: 1.0 * intensity,
+      tiltDrift: 0.02 * intensity,
       rotX: 0.05,
-      rotYOffset: 0.03,
-      dollyShift: 0.08,
+      rotYOffset: 0.03 * intensity,
+      dollyShift: 0.08 * intensity,
       fovOffset: 2,
     };
     return {
