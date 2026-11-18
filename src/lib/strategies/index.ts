@@ -8,6 +8,7 @@ import { dollyStrategy } from './dolly';
 import { dutchAngleStrategy } from './dutchAngle';
 import { tiltUpStrategy } from './tiltUp';
 import { snapDollyStrategy } from './snapDolly';
+import { slideStrategy } from './slide';
 
 /**
  * すべてのカメラワーク・ストラテジーを集約した辞書マップ (Registry)
@@ -22,6 +23,7 @@ export const CAMERA_STRATEGIES: Record<CameraPattern, CameraPatternStrategy> = {
   dutch_angle: dutchAngleStrategy,
   tilt_up: tiltUpStrategy,
   snap_dolly: snapDollyStrategy,
+  slide: slideStrategy,
 };
 
 // 各ストラテジーも個別エクスポート
@@ -35,4 +37,5 @@ export {
   dutchAngleStrategy,
   tiltUpStrategy,
   snapDollyStrategy,
+  slideStrategy,
 };

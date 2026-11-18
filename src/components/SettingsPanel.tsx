@@ -286,8 +286,9 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
       )}
 
       {/* ---------------------------------------------------- */}
-      {/* 5. トランジション効果選択（自動演出時のみ）             */}
+      {/* 5. トランジション効果選択（仕様見直し中のため一時非表示） */}
       {/* ---------------------------------------------------- */}
+      {/*
       {!isFixedFront && (
         <div>
           <label className="mb-2 flex items-center justify-between text-xs font-medium text-slate-400">
@@ -296,7 +297,7 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
               トランジション（切り替え効果）
             </span>
             <span className="text-[10px] text-slate-500">
-              {(options.transitions ?? ['whip']).length === 0 ? 'すべてハードカット' : '有効'}
+              {(options.transitions ?? []).length === 0 ? 'すべてハードカット' : '有効'}
             </span>
           </label>
           <div className="grid grid-cols-1 gap-2">
@@ -308,10 +309,11 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
                   type="button"
                   onClick={() => toggleTransition(t.type)}
                   disabled={disabled}
-                  className={`rounded-lg border px-3 py-2 text-left transition-all ${active
-                    ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
-                    : 'border-slate-700/40 bg-slate-800/30 text-slate-500 hover:border-slate-600/50'
-                    } disabled:cursor-not-allowed`}
+                  className={`rounded-lg border px-3 py-2 text-left transition-all ${
+                    active
+                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-300'
+                      : 'border-slate-700/40 bg-slate-800/30 text-slate-500 hover:border-slate-600/50'
+                  } disabled:cursor-not-allowed`}
                 >
                   <p className="text-xs font-medium">{t.label}</p>
                   <p className="mt-0.5 text-[10px] opacity-70">{t.description}</p>
@@ -321,6 +323,7 @@ export function SettingsPanel({ options, onChange, disabled }: SettingsPanelProp
           </div>
         </div>
       )}
+      */}
     </div>
   );
 }

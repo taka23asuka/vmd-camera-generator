@@ -87,12 +87,13 @@ function selectPatternWithEnergy(
 
   const cutDuration = Math.max(0.1, endTime - startTime);
 
-  // サビ・盛り上がり時にスナップドリーとドリーを大幅ブースト
+  // 音量エネルギーに応じた動的重み変調
   if (energy > 0.6) {
-    if (weights.snap_dolly) weights.snap_dolly *= 2.6; // サビ頭やドロップで強烈に当たる
+    if (weights.snap_dolly) weights.snap_dolly *= 2.6;
     if (weights.dolly) weights.dolly *= 2.4;
     if (weights.lowangle) weights.lowangle *= 2.0;
     if (weights.dutch_angle) weights.dutch_angle *= 1.8;
+    if (weights.slide) weights.slide *= 1.6; // サビでダイナミックに通り抜ける
     if (weights.orbit) weights.orbit *= 1.6;
     if (weights.highangle) weights.highangle *= 1.3;
     if (weights.wide) weights.wide *= 0.5;
@@ -101,9 +102,10 @@ function selectPatternWithEnergy(
     if (weights.closeup) weights.closeup *= 2.2;
     if (weights.tilt_up) weights.tilt_up *= 2.0;
     if (weights.wide) weights.wide *= 1.8;
+    if (weights.slide) weights.slide *= 1.4; // 静かなパートでも優雅に流せる
     if (weights.orbit) weights.orbit *= 1.2;
     if (weights.dolly) weights.dolly *= 0.4;
-    if (weights.snap_dolly) weights.snap_dolly *= 0.2; // 静かなパートでは控えめに
+    if (weights.snap_dolly) weights.snap_dolly *= 0.2;
     if (weights.lowangle) weights.lowangle *= 0.5;
   }
 
@@ -115,6 +117,7 @@ function selectPatternWithEnergy(
     if (weights.wide) weights.wide *= 0.6;
   } else if (cutDuration > 3.0) {
     if (weights.orbit) weights.orbit *= 2.0;
+    if (weights.slide) weights.slide *= 1.8; // 長めのカットでしっかり中央ホールドを見せる
     if (weights.wide) weights.wide *= 1.6;
     if (weights.closeup) weights.closeup *= 0.7;
     if (weights.snap_dolly) weights.snap_dolly *= 0.5;
@@ -392,7 +395,7 @@ export function generateCameraMotion(
     usageMap.set(pattern, (usageMap.get(pattern) ?? 0) + 1);
   }
 
-  // トランジション判定
+  // トランジション判定 (オプションが空配列の場合はスキップ)
   const activeTransitions = options.transitions ?? [];
   let lastTransitionCutIndex = -999;
 
@@ -425,7 +428,7 @@ export function generateCameraMotion(
   }
 
   // ============================================================
-  // キーフレーム生成 (スナップドリーの3点キーフレーム対応)
+  // キーフレーム生成 (スナップドリー ＆ スライドの中間キーフレーム対応)
   // ============================================================
   const keyframePoints: CameraKeyframe[] = [];
 
@@ -496,26 +499,60 @@ export function generateCameraMotion(
     }
 
     // ========================================================
-    // スナップドリー：約0.25秒（7〜8フレーム）で急突入し、余韻をつけてキープ！
+    // 【スナップドリー専用】約0.25秒（7〜8フレーム）で急突入し着地！
     // ========================================================
     if (cut.pattern === 'snap_dolly') {
       const cutLength = cut.endFrame - cut.startFrame;
-      // カット尺に合わせて 6〜8フレーム（約0.25秒）で急接近を完了させる
       const SNAP_FRAMES = Math.min(8, Math.max(6, Math.floor(cutLength * 0.25)));
       const snapArrivalFrame = cut.startFrame + SNAP_FRAMES;
       const snapLookAt = getLookAt(snapArrivalFrame);
 
-      // 8フレーム目で全体の約92%まで一気に突入！
       const distDiff = endState.distance - startState.distance;
       const snapDistance = startState.distance + distDiff * 0.92;
 
-      // 急突入の完了キーフレーム
       keyframePoints.push({
         ...endState,
         target: snapLookAt,
         distance: snapDistance,
         frame: snapArrivalFrame,
-        hardCut: false, // ここから終点までは残り8%をジワッと押し込む余韻
+        hardCut: false,
+      });
+    }
+
+    // ========================================================
+    // 【新設・スライド専用】4点キーフレーム補間
+    // (画面外からスライドイン -> 中央ホールド -> 画面外へスライドアウト)
+    // ========================================================
+    if (cut.pattern === 'slide') {
+      const cutLength = cut.endFrame - cut.startFrame;
+      // カット尺に合わせてイン・アウト時間を計算（約0.25〜0.4秒）
+      const slideInFrames = Math.min(12, Math.max(6, Math.floor(cutLength * 0.20)));
+      const slideOutFrames = Math.min(12, Math.max(6, Math.floor(cutLength * 0.20)));
+
+      const frameIn = cut.startFrame + slideInFrames;
+      const frameOut = Math.max(frameIn + 2, cut.endFrame - slideOutFrames);
+
+      const lookAtIn = getLookAt(frameIn);
+      const lookAtOut = getLookAt(frameOut);
+
+      // 開始キーの補間曲線を「Ease-Out（画面外から飛び込んできて中央へ滑らかに着地）」に設定
+      keyframePoints[keyframePoints.length - 1].customInterp = easeOutInterp;
+
+      // キー2: スライドイン完了・中央ホールド開始（キャラを画面中央に完璧に捉える）
+      keyframePoints.push({
+        ...startState,
+        target: { x: lookAtIn.x, y: lookAtIn.y - 2.5, z: lookAtIn.z },
+        frame: frameIn,
+        hardCut: false, // ここからホールド終了までは中央でキャラを安定追従
+      });
+
+      // キー3: 中央ホールド終了・スライドアウト開始（ここからEase-Inで加速して画面外へ抜ける）
+      keyframePoints.push({
+        ...endState,
+        target: { x: lookAtOut.x, y: lookAtOut.y - 2.5, z: lookAtOut.z },
+        frame: frameOut,
+        hardCut: false,
+        customInterp: easeInInterp, // 画面外へ向かって加速アウト
       });
     }
 
@@ -559,12 +596,24 @@ export function generateCameraMotion(
   for (const cut of cutDefs) {
     allowedFrames.add(cut.startFrame);
     allowedFrames.add(cut.endFrame);
-    // スナップドリーの急着地キーを許可
+
     if (cut.pattern === 'snap_dolly') {
       const cutLength = cut.endFrame - cut.startFrame;
       const snapFrames = Math.min(8, Math.max(6, Math.floor(cutLength * 0.25)));
       allowedFrames.add(cut.startFrame + snapFrames);
     }
+
+    // スライドの中間キーフレーム（イン完了 & アウト開始）を許可
+    if (cut.pattern === 'slide') {
+      const cutLength = cut.endFrame - cut.startFrame;
+      const slideInFrames = Math.min(12, Math.max(6, Math.floor(cutLength * 0.20)));
+      const slideOutFrames = Math.min(12, Math.max(6, Math.floor(cutLength * 0.20)));
+      const frameIn = cut.startFrame + slideInFrames;
+      const frameOut = Math.max(frameIn + 2, cut.endFrame - slideOutFrames);
+      allowedFrames.add(frameIn);
+      allowedFrames.add(frameOut);
+    }
+
     if (cut.transitionType) {
       allowedFrames.add(cut.endFrame - 2);
     }

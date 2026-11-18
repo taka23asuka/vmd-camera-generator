@@ -77,6 +77,7 @@ export default function App() {
       'dutch_angle',
       'tilt_up',
       'snap_dolly',
+      'slide',
     ],
     transitions: [],
     lookAtBone: 'センター',

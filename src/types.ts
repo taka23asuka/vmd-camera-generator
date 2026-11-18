@@ -100,7 +100,8 @@ export type CameraPattern =
   | 'dolly'
   | 'dutch_angle'
   | 'tilt_up'
-  | 'snap_dolly';
+  | 'snap_dolly'
+  | 'slide';
 
 /** カメラトランジションの識別子 */
 export type CameraTransition = 'whip' | 'spin';
@@ -184,6 +185,7 @@ export const CAMERA_PATTERNS: CameraPatternInfo[] = [
   { type: 'dutch_angle', label: 'ダッチアングル', description: '斜めに傾けたエモいショット', icon: 'RotateCw' },
   { type: 'tilt_up', label: 'ティルトアップ', description: '足元から顔へ見上げるショット', icon: 'ArrowUp' },
   { type: 'snap_dolly', label: 'スナップドリー', description: '一瞬で顔面へ急接近するアタックショット', icon: 'Zap' },
+  { type: 'slide', label: 'スライド', description: '画面外から流れて通り抜けるショット', icon: 'MoveHorizontal' },
 ];
 
 /**
