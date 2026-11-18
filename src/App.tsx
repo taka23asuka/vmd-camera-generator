@@ -10,6 +10,8 @@ import {
   CheckCircle2,
   Save,
   FolderOpen,
+  Info,
+  Box,
 } from 'lucide-react';
 import packageJson from '../package.json';
 import { DropZone } from '@/components/DropZone';
@@ -21,6 +23,7 @@ import { analyzeAudio } from '@/lib/audio';
 import { parseVMD, writeCameraVMD } from '@/lib/vmd';
 import { generateCameraMotion, downloadVMD, type GenerationResult } from '@/lib/camera';
 import { exportProject, importProject, type ProjectData } from '@/lib/project';
+import { extractModelEyeHeight, type ModelEyeInfo } from '@/lib/model';
 import type {
   AudioAnalysisResult,
   CameraGenerationOptions,
@@ -37,6 +40,9 @@ export default function App() {
   // ------------------------------------------------------------
   const [vmdFile, setVmdFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [modelFile, setModelFile] = useState<File | null>(null); // 【新設】PMX/PMDモデルファイル
+  const [modelEyeInfo, setModelEyeInfo] = useState<ModelEyeInfo | null>(null); // 【新設】検出された目線情報
+
   const [vmdParseResult, setVmdParseResult] = useState<VMDParseResult | null>(null);
   const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysisResult | null>(null);
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
@@ -67,18 +73,7 @@ export default function App() {
     cameraMode: 'auto',
     beatSensitivity: 0.6,
     cutInterval: 1.5,
-    patterns: [
-      'wide',
-      'closeup',
-      'highangle',
-      'lowangle',
-      'orbit',
-      'dolly',
-      'dutch_angle',
-      'tilt_up',
-      'snap_dolly',
-      'slide',
-    ],
+    patterns: ['wide', 'closeup', 'highangle', 'lowangle', 'orbit', 'dolly', 'dutch_angle', 'tilt_up', 'snap_dolly', 'slide'],
     transitions: [],
     lookAtBone: 'センター',
     baseDistance: 45,
@@ -92,25 +87,22 @@ export default function App() {
   const projectInputRef = useRef<HTMLInputElement>(null);
 
   // ------------------------------------------------------------
-  // 5. 算出プロパティ (ボタンの活性・非活性条件)
+  // 5. 算出プロパティ
   // ------------------------------------------------------------
   const isWorking = phase === 'analyzing' || phase === 'generating';
   const canGenerate = vmdFile !== null && audioFile !== null && !isWorking;
-  // 保存ボタン: カメラ生成が完了している場合のみ活性
   const canExport = phase === 'done' && generationResult !== null && !isWorking;
-  // 読込ボタン: VMDと音声の両方がセットされている場合のみ活性（未選択時の破損を防ぐ）
   const canImport = vmdFile !== null && audioFile !== null && !isWorking;
 
   // ------------------------------------------------------------
   // 6. イベントハンドラ群 (Controller Logic)
   // ------------------------------------------------------------
 
-  /**
-   * アプリケーションの状態を初期化（エラーメッセージも完全消去）
-   */
   const reset = useCallback(() => {
     setVmdFile(null);
     setAudioFile(null);
+    setModelFile(null);
+    setModelEyeInfo(null);
     setVmdParseResult(null);
     setAudioAnalysis(null);
     setGenerationResult(null);
@@ -126,9 +118,6 @@ export default function App() {
     generatedBufferRef.current = null;
   }, []);
 
-  /**
-   * VMDファイル選択処理（エラーをクリア）
-   */
   const handleVmdSelect = useCallback(async (file: File) => {
     setErrorMsg('');
     setVmdFile(file);
@@ -142,9 +131,6 @@ export default function App() {
     }
   }, []);
 
-  /**
-   * 音声ファイル選択処理（エラーをクリア）
-   */
   const handleAudioSelect = useCallback((file: File) => {
     setErrorMsg('');
     setAudioFile(file);
@@ -154,12 +140,36 @@ export default function App() {
   }, []);
 
   /**
-   * カメラモーション生成パイプライン（開始時にエラーメッセージを必ずクリア）
+   * 【新設】PMX/PMDモデルファイル選択時の処理
+   * バイナリから目線ボーン（両目・頭など）の初期Y座標を抽出し、options.eyeHeight を自動更新
    */
+  const handleModelSelect = useCallback(async (file: File) => {
+    setErrorMsg('');
+    setModelFile(file);
+    try {
+      const buffer = await file.arrayBuffer();
+      const eyeInfo = extractModelEyeHeight(buffer);
+
+      if (eyeInfo) {
+        setModelEyeInfo(eyeInfo);
+        // 目線の高さを自動設定！
+        setOptions((prev) => ({
+          ...prev,
+          eyeHeight: eyeInfo.eyeHeight,
+        }));
+      } else {
+        setModelEyeInfo(null);
+        console.warn('[Model] Could not detect eye bone in model file.');
+      }
+    } catch (e) {
+      console.error('[Model] Unexpected error:', e);
+      setModelEyeInfo(null);
+    }
+  }, []);
+
   const handleGenerate = useCallback(async () => {
     if (!audioFile || !vmdFile) return;
 
-    // 【改善】生成開始時に古いエラーメッセージを必ず完全にクリア
     setErrorMsg('');
     setPhase('analyzing');
     setProgress(0);
@@ -204,18 +214,12 @@ export default function App() {
     }
   }, [audioFile, vmdFile, vmdParseResult, options, generationResult]);
 
-  /**
-   * 生成されたVMDファイルをローカルにダウンロード
-   */
   const handleDownload = useCallback(() => {
     if (!generatedBufferRef.current) return;
     const baseName = audioFile?.name.replace(/\.[^.]+$/, '') ?? 'camera';
     downloadVMD(generatedBufferRef.current, `camera_${baseName}.vmd`);
   }, [audioFile]);
 
-  /**
-   * 指定カットのロック状態切り替え
-   */
   const handleToggleLock = useCallback((cutIndex: number) => {
     setGenerationResult((prev) => {
       if (!prev) return null;
@@ -226,9 +230,6 @@ export default function App() {
     });
   }, []);
 
-  /**
-   * 指定カットのカメラパターンを手動変更し、即座にVMDデータを再計算
-   */
   const handleChangePattern = useCallback(
     (cutIndex: number, newPattern: CameraPattern) => {
       if (!audioAnalysis) return;
@@ -256,15 +257,11 @@ export default function App() {
     [audioAnalysis, vmdParseResult, options]
   );
 
-  /**
-   * タイムラインまたはカードクリック時のカット選択＆ジャンプ
-   */
   const handleSelectCut = useCallback((cut: CutInfo) => {
     setSelectedCutIndex(cut.index);
     setSeekRequest({ time: cut.time, nonce: Date.now() });
   }, []);
 
-  // フッターからの再生コントロールハンドラ
   const handleTogglePlay = useCallback(() => {
     setPlayTrigger((prev) => prev + 1);
   }, []);
@@ -279,13 +276,6 @@ export default function App() {
     setSeekRequest({ time: 0, nonce: Date.now() });
   }, []);
 
-  // ============================================================
-  // プロジェクト保存・読み込み処理 (確定仕様)
-  // ============================================================
-
-  /**
-   * 現在の設定およびカット構成をJSONファイルとして保存（生成完了時のみ実行可能）
-   */
   const handleExportProject = useCallback(() => {
     if (!canExport || !generationResult) return;
 
@@ -300,19 +290,15 @@ export default function App() {
     exportProject(projectData, audioFile?.name ?? 'camera');
   }, [canExport, audioFile, vmdFile, options, generationResult]);
 
-  /**
-   * 設定ファイルを読み込み、即座にカメラモーションを完全自動再生成して画面と同期
-   */
   const handleImportFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file || !audioFile || !vmdFile) return;
 
       try {
-        setErrorMsg(''); // 読み込み開始時にエラーをクリア
+        setErrorMsg('');
         const projectData = await importProject(file);
 
-        // 1. ファイル名照合チェック（別のファイルが開かれている場合の警告）
         const isAudioMismatch = projectData.audioFileName && audioFile.name !== projectData.audioFileName;
         const isVmdMismatch = projectData.vmdFileName && vmdFile.name !== projectData.vmdFileName;
 
@@ -327,19 +313,16 @@ export default function App() {
           if (!window.confirm(warningMsg)) return;
         }
 
-        // 2. カメラ設定オプションの更新
         const newOptions: CameraGenerationOptions = {
           ...projectData.options,
           existingCuts: projectData.cuts,
         };
         setOptions(newOptions);
 
-        // 3. 【最重要】設定ファイルの内容で即座にカメラモーションを完全再生成！
         setPhase('generating');
         setProgressLabel('設定ファイルの内容でタイムラインを再構築中...');
         setProgress(0.5);
 
-        // 音声解析がまだ無ければ実行、あればキャッシュを利用
         let currentAnalysis = audioAnalysis;
         if (!currentAnalysis) {
           currentAnalysis = await analyzeAudio(audioFile, newOptions.beatSensitivity, newOptions.cutInterval);
@@ -373,7 +356,6 @@ export default function App() {
   // ------------------------------------------------------------
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#0a0e17] text-slate-200">
-      {/* 隠しプロジェクトファイル入力 input */}
       <input
         ref={projectInputRef}
         type="file"
@@ -397,7 +379,7 @@ export default function App() {
       </div>
 
       {/* ======================================================== */}
-      {/* 1. ヘッダー領域（画面最上部固定）                          */}
+      {/* 1. ヘッダー領域（固定）                                    */}
       {/* ======================================================== */}
       <header className="relative z-30 flex h-12 shrink-0 items-center justify-between border-b border-slate-800/80 bg-slate-900/90 px-4 backdrop-blur-md">
         <div className="flex items-center gap-2.5">
@@ -414,9 +396,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* ヘッダー右側アクション（保存・読込の活性/非活性を厳密制御 ＆ リセット） */}
         <div className="flex items-center gap-2">
-          {/* プロジェクト保存ボタン（カメラ生成完了時のみ活性化） */}
           <button
             type="button"
             onClick={handleExportProject}
@@ -428,7 +408,6 @@ export default function App() {
             <span>保存</span>
           </button>
 
-          {/* プロジェクト読込ボタン（VMDと音声をセット後のみ活性化） */}
           <button
             type="button"
             onClick={() => projectInputRef.current?.click()}
@@ -440,7 +419,6 @@ export default function App() {
             <span>読込</span>
           </button>
 
-          {/* リセットボタン */}
           <button
             type="button"
             onClick={reset}
@@ -454,7 +432,7 @@ export default function App() {
       </header>
 
       {/* ======================================================== */}
-      {/* 2. 中央メイン作業エリア (左: 3Dプレビュー, 右: 設定・生成)  */}
+      {/* 2. 中央メイン作業エリア                                    */}
       {/* ======================================================== */}
       <main className="relative z-10 flex-1 overflow-y-auto p-3 sm:p-4">
         <div className="mx-auto grid max-w-7xl gap-4 md:grid-cols-[260px_1fr]">
@@ -471,6 +449,7 @@ export default function App() {
                 onDurationChange={setPreviewDuration}
                 onPlayStateChange={setIsPlaying}
                 playTrigger={playTrigger}
+                eyeHeight={options.eyeHeight}
               />
             ) : (
               <div className="flex h-[430px] w-[242px] shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-700/50 bg-slate-900/30 p-4 text-center">
@@ -487,10 +466,10 @@ export default function App() {
 
           {/* 右カラム：ファイル入力・設定・生成パネル */}
           <div className="space-y-3 min-w-0">
-            {/* 1. ファイル入力セクション */}
+            {/* 1. ファイル入力セクション（VMD、音声 ＋ 【新設】PMXモデル） */}
             <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 space-y-2">
               <SectionHeader step="1" title="ファイル入力" icon={<Video size={14} />} />
-              <div className="grid gap-2.5 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 <DropZone
                   label="キャラクターVMD"
                   description=".vmdファイルをアップロード"
@@ -518,14 +497,46 @@ export default function App() {
                   }}
                   accentColor="#3b82f6"
                 />
+                {/* 【新設】PMX / PMD モデルドロップゾーン（任意） */}
+                <DropZone
+                  label="モデル（任意）"
+                  description=".pmx または .pmd で目線を自動設定"
+                  accept=".pmx,.pmd"
+                  icon="model"
+                  file={modelFile}
+                  onFileSelect={handleModelSelect}
+                  onFileClear={() => {
+                    setModelFile(null);
+                    setModelEyeInfo(null);
+                    // 【改善】モデルクリア時は目線の高さを初期値(15)に自動リセット！
+                    setOptions((prev) => ({
+                      ...prev,
+                      eyeHeight: 15,
+                    }));
+                  }}
+                  accentColor="#a855f7"
+                />
               </div>
 
-              {vmdFile && vmdParseResult && (
-                <div className="flex items-center gap-1.5 rounded-lg border border-cyan-800/30 bg-cyan-900/10 px-2.5 py-1 text-xs text-cyan-300/80">
-                  <CheckCircle2 size={13} className="text-cyan-400" />
-                  <span>VMD検出済み（{vmdParseResult.boneCount}フレーム）</span>
-                </div>
-              )}
+              {/* ステータスバッジ群 */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                {vmdFile && vmdParseResult && (
+                  <div className="flex items-center gap-1.5 rounded-lg border border-cyan-800/30 bg-cyan-900/10 px-2.5 py-1 text-xs text-cyan-300/80">
+                    <CheckCircle2 size={13} className="text-cyan-400" />
+                    <span>VMD検出済み（{vmdParseResult.boneCount}フレーム）</span>
+                  </div>
+                )}
+
+                {/* 【新設】モデル目線検出バッジ */}
+                {modelFile && modelEyeInfo && (
+                  <div className="flex items-center gap-1.5 rounded-lg border border-purple-800/40 bg-purple-900/15 px-2.5 py-1 text-xs text-purple-300/90">
+                    <Box size={13} className="text-purple-400" />
+                    <span>
+                      {modelEyeInfo.modelName}: 目線高さを自動適用（{modelEyeInfo.matchedBone} Y: {modelEyeInfo.eyeHeight}）
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* 2. カメラワーク設定 (アコーディオン) */}
@@ -613,7 +624,7 @@ export default function App() {
       </main>
 
       {/* ======================================================== */}
-      {/* 3. フッター領域（画面最下部固定ドック：タイムライン＆統合操作） */}
+      {/* 3. フッター領域（固定）                                    */}
       {/* ======================================================== */}
       <footer className="relative z-30 shrink-0 border-t border-slate-800/80 bg-slate-900/95 px-4 py-2.5 backdrop-blur-md shadow-2xl">
         <div className="mx-auto max-w-7xl">

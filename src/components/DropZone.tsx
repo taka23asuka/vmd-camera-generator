@@ -1,6 +1,6 @@
 import type React from 'react';
 import { useCallback, useRef, useState } from 'react';
-import { UploadCloud, FileAudio, FileText, X } from 'lucide-react';
+import { UploadCloud, FileAudio, FileText, X, Box } from 'lucide-react';
 
 // ============================================================
 // コンポーネント Props 定義
@@ -17,7 +17,7 @@ interface DropZoneProps {
   /** 受け入れる拡張子・MIMEタイプ (例: ".vmd", ".wav,.mp3") */
   accept: string;
   /** 表示アイコンの種別 ('audio' または 'vmd') */
-  icon: 'audio' | 'vmd';
+  icon: 'audio' | 'vmd' | 'model';
   /** 現在選択されているファイル（未選択時は null） */
   file: File | null;
   /** ファイル選択時のコールバック関数 */
@@ -97,7 +97,13 @@ export function DropZone({
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg"
             style={{ backgroundColor: `${accentColor}20`, color: accentColor }}
           >
-            {icon === 'audio' ? <FileAudio size={22} /> : <FileText size={22} />}
+            {icon === 'audio' ? (
+              <FileAudio size={22} />
+            ) : icon === 'model' ? (
+              <Box size={22} />
+            ) : (
+              <FileText size={22} />
+            )}
           </div>
 
           {/* ファイル名・サイズ */}
@@ -129,11 +135,10 @@ export function DropZone({
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onClick={() => inputRef.current?.click()}
-      className={`cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition-all ${
-        isDragging
-          ? 'border-cyan-400 bg-cyan-400/10'
-          : 'border-slate-700/50 bg-slate-800/20 hover:border-slate-600 hover:bg-slate-800/40'
-      }`}
+      className={`cursor-pointer rounded-xl border-2 border-dashed p-6 text-center transition-all ${isDragging
+        ? 'border-cyan-400 bg-cyan-400/10'
+        : 'border-slate-700/50 bg-slate-800/20 hover:border-slate-600 hover:bg-slate-800/40'
+        }`}
     >
       {/* 非表示のネイティブ file input */}
       <input
@@ -153,7 +158,13 @@ export function DropZone({
         className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl"
         style={{ backgroundColor: `${accentColor}15`, color: accentColor }}
       >
-        {icon === 'audio' ? <FileAudio size={24} /> : <FileText size={24} />}
+        {icon === 'audio' ? (
+          <FileAudio size={24} />
+        ) : icon === 'model' ? (
+          <Box size={24} />
+        ) : (
+          <FileText size={24} />
+        )}
       </div>
 
       {/* ラベル & 説明 */}

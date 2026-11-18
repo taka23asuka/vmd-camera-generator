@@ -29,6 +29,8 @@ interface CameraPreviewProps {
   onPlayStateChange?: (isPlaying: boolean) => void;
   /** 外部からの再生/一時停止トリガー */
   playTrigger?: number;
+  /** 目線の高さ（棒人間の等身スケーリングに使用） */
+  eyeHeight?: number;
 }
 
 // ============================================================
@@ -194,6 +196,7 @@ export function CameraPreview({
   onDurationChange,
   onPlayStateChange,
   playTrigger,
+  eyeHeight = 15,
 }: CameraPreviewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -363,6 +366,10 @@ export function CameraPreview({
 
     const rootBone = buildBone(SKELETON_DEF, null);
 
+    // 目線の高さに合わせて棒人間の等身を自動スケーリング！
+    const scaleRatio = eyeHeight / 15.0;
+    rootBone.scale.set(scaleRatio, scaleRatio, scaleRatio);
+
     const headObj = boneMap.get('頭')?.bone;
     if (headObj) {
       const headGeom = new THREE.SphereGeometry(0.85, 16, 16);
@@ -399,7 +406,7 @@ export function CameraPreview({
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
-  }, [vmdData]);
+  }, [vmdData, eyeHeight]);
 
   // 2. フレームごとのアニメーション同期ループ
   useEffect(() => {
@@ -500,7 +507,7 @@ export function CameraPreview({
     return () => cancelAnimationFrame(animId);
   }, [cameraFrames, viewMode, onTimeUpdate]);
 
-{/* src/components/CameraPreview.tsx の return 部分 */}
+  {/* src/components/CameraPreview.tsx の return 部分 */ }
 
   return (
     <div className="relative w-full flex justify-center">
@@ -540,11 +547,10 @@ export function CameraPreview({
         <button
           type="button"
           onClick={() => setViewMode(viewMode === 'camera' ? 'free' : 'camera')}
-          className={`absolute right-2.5 top-2.5 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium backdrop-blur-md transition-all shadow-md ${
-            viewMode === 'camera'
-              ? 'bg-slate-900/80 text-cyan-300 border border-cyan-500/40 hover:bg-slate-800'
-              : 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/80 shadow-cyan-500/20'
-          }`}
+          className={`absolute right-2.5 top-2.5 flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium backdrop-blur-md transition-all shadow-md ${viewMode === 'camera'
+            ? 'bg-slate-900/80 text-cyan-300 border border-cyan-500/40 hover:bg-slate-800'
+            : 'bg-cyan-500/30 text-cyan-200 border border-cyan-400/80 shadow-cyan-500/20'
+            }`}
           title="カメラ視点を切り替え"
         >
           <Eye size={12} />
