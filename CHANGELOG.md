@@ -5,6 +5,15 @@
 
 ---
 
+## [v1.0.1]
+
+### 変更・改善 (Changed)
+- **目線高さの黄金比率の共通定数化:**
+  - MMD出力（`camera.ts`）と3Dプレビュー（`CameraPreview.tsx`）で重複していたマジックナンバー（等身補正係数 `0.83`）を `src/types.ts` (`EYE_HEIGHT_RATIO_CORRECTION`) に集約し、保守性を向上。
+  - プレビューと実機MMDのカメラ注視点の同期精度を改善。
+
+---
+
 ## [v1.0.0] 
 
 ### メジャーリリース (Major Release)

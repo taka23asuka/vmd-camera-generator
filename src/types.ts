@@ -264,3 +264,13 @@ export interface CameraPatternStrategy {
   createStartKeyframe: (ctx: PatternContext) => CameraKeyframe;
   createEndKeyframe: (ctx: PatternContext, startKf: CameraKeyframe) => CameraKeyframe;
 }
+
+// ============================================================
+// 5. カメラ・モデル共通定数 (Common Constants)
+// ============================================================
+
+/** 
+ * モデルの目線高さ(eyeHeight)に対するカメラ注視点の黄金比率補正
+ * （目の位置100%ではなく、顔の中心・表情の重心を捉えるための係数）
+ */
+export const EYE_HEIGHT_RATIO_CORRECTION = 0.83;

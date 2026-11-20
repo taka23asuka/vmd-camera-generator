@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { Eye, Video } from 'lucide-react';
 import type { CameraFrame, VMDData, CutInfo } from '@/types';
+import { EYE_HEIGHT_RATIO_CORRECTION } from '@/types';
 
 const FPS = 30;
 
@@ -467,8 +468,9 @@ export function CameraPreview({
         const span = cB.frameNumber - cA.frameNumber;
         const t = span <= 0 ? 0 : Math.min(1, Math.max(0, (frameNumber - cA.frameNumber) / span));
 
+        const RATIO_CORRECTION = EYE_HEIGHT_RATIO_CORRECTION;
         const tx = THREE.MathUtils.lerp(cA.position.x, cB.position.x, t);
-        const ty = THREE.MathUtils.lerp(cA.position.y, cB.position.y, t);
+        const ty = THREE.MathUtils.lerp(cA.position.y, cB.position.y, t) / RATIO_CORRECTION;;
         const tz = THREE.MathUtils.lerp(cA.position.z, cB.position.z, t);
         targetGroupRef.current.position.set(tx, ty, tz);
 

@@ -18,6 +18,7 @@ import {
   getBonePositionAtFrame,
 } from '@/lib/vmd';
 import { CAMERA_STRATEGIES } from '@/lib/strategies';
+import { EYE_HEIGHT_RATIO_CORRECTION } from '@/types';
 
 const FPS = 30;
 
@@ -270,20 +271,23 @@ export function generateCameraMotion(
     }
   }
 
+  const ratioCorrection = EYE_HEIGHT_RATIO_CORRECTION;
+
   const heightOffset = matchedBoneName
-    ? getBoneHeightOffset(matchedBoneName, options.eyeHeight)
-    : options.eyeHeight;
+    ? getBoneHeightOffset(matchedBoneName, options.eyeHeight) * ratioCorrection
+    : options.eyeHeight * ratioCorrection;
 
   const parentFrames = vmdData?.boneFrames['全ての親'] || null;
   const grooveFrames = vmdData?.boneFrames['グルーブ'] || null;
-  const defaultLookAt = { x: 0, y: options.eyeHeight, z: 0 };
+  const defaultLookAt = { x: 0, y: options.eyeHeight * ratioCorrection, z: 0 };
 
   const getLookAt = (frame: number): { x: number; y: number; z: number } => {
     if (boneFrames) {
       const pos = getBonePositionAtFrame(boneFrames, frame);
       if (pos) {
         let x = pos.x;
-        let y = pos.y + heightOffset;
+        // ボーンの高さに比例係数を掛け合わせる
+        let y = (pos.y + (matchedBoneName ? getBoneHeightOffset(matchedBoneName, options.eyeHeight) : options.eyeHeight)) * ratioCorrection;
         let z = pos.z;
 
         if (matchedBoneName !== '全ての親' && parentFrames) {
