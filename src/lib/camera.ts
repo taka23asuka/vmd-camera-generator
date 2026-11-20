@@ -93,7 +93,7 @@ function selectPatternWithEnergy(
     if (weights.dolly) weights.dolly *= 2.4;
     if (weights.lowangle) weights.lowangle *= 2.0;
     if (weights.dutch_angle) weights.dutch_angle *= 1.8;
-    if (weights.slide) weights.slide *= 1.6; // サビでダイナミックに通り抜ける
+    if (weights.slide) weights.slide *= 1.6;
     if (weights.orbit) weights.orbit *= 1.6;
     if (weights.highangle) weights.highangle *= 1.3;
     if (weights.wide) weights.wide *= 0.5;
@@ -102,7 +102,7 @@ function selectPatternWithEnergy(
     if (weights.closeup) weights.closeup *= 2.2;
     if (weights.tilt_up) weights.tilt_up *= 2.0;
     if (weights.wide) weights.wide *= 1.8;
-    if (weights.slide) weights.slide *= 1.4; // 静かなパートでも優雅に流せる
+    if (weights.slide) weights.slide *= 1.4;
     if (weights.orbit) weights.orbit *= 1.2;
     if (weights.dolly) weights.dolly *= 0.4;
     if (weights.snap_dolly) weights.snap_dolly *= 0.2;
@@ -117,7 +117,7 @@ function selectPatternWithEnergy(
     if (weights.wide) weights.wide *= 0.6;
   } else if (cutDuration > 3.0) {
     if (weights.orbit) weights.orbit *= 2.0;
-    if (weights.slide) weights.slide *= 1.8; // 長めのカットでしっかり中央ホールドを見せる
+    if (weights.slide) weights.slide *= 1.8;
     if (weights.wide) weights.wide *= 1.6;
     if (weights.closeup) weights.closeup *= 0.7;
     if (weights.snap_dolly) weights.snap_dolly *= 0.5;
@@ -301,28 +301,44 @@ export function generateCameraMotion(
     return defaultLookAt;
   };
 
-  const cutTimes = audio.peakTimes;
-  const cuts: CutInfo[] = [];
   const patterns =
     options.patterns.length > 0
       ? options.patterns.filter((p) => p !== ('fixed_front' as CameraPattern))
       : (Object.keys(CAMERA_STRATEGIES) as CameraPattern[]);
 
-  const minCutDuration = options.cutInterval ?? 1.5;
-  const minCutFrames = Math.max(Math.round(minCutDuration * FPS), 15);
+  // ========================================================
+  // カット境界の決定
+  // 手動分割・結合などで options.existingCuts がある場合はそれを最優先で使用！
+  // 初回生成時のみ、音声ビート解析 (audio.peakTimes) からカット境界を算出する。
+  // ========================================================
+  let cutStartFrames: number[];
+  let cutStartTimes: number[];
 
-  const validCutFrames: { frame: number; time: number }[] = [];
-  let lastCutBoundary = 0;
+  if (options.existingCuts && options.existingCuts.length > 0) {
+    cutStartFrames = options.existingCuts.map((c) => c.frame);
+    cutStartTimes = options.existingCuts.map((c) => c.time);
+  } else {
+    const cutTimes = audio.peakTimes;
+    const minCutDuration = options.cutInterval ?? 1.5;
+    const minCutFrames = Math.max(Math.round(minCutDuration * FPS), 15);
 
-  for (let i = 0; i < cutTimes.length; i++) {
-    const t = cutTimes[i];
-    const frame = Math.round(t * FPS);
-    if (frame - lastCutBoundary >= minCutFrames && totalFrames - frame >= Math.round(minCutFrames * 0.4)) {
-      validCutFrames.push({ frame, time: t });
-      lastCutBoundary = frame;
+    const validCutFrames: { frame: number; time: number }[] = [];
+    let lastCutBoundary = 0;
+
+    for (let i = 0; i < cutTimes.length; i++) {
+      const t = cutTimes[i];
+      const frame = Math.round(t * FPS);
+      if (frame - lastCutBoundary >= minCutFrames && totalFrames - frame >= Math.round(minCutFrames * 0.4)) {
+        validCutFrames.push({ frame, time: t });
+        lastCutBoundary = frame;
+      }
     }
+
+    cutStartFrames = [0, ...validCutFrames.map((v) => v.frame)];
+    cutStartTimes = [0, ...validCutFrames.map((v) => v.time)];
   }
 
+  // カット定義の構造
   interface CutDef {
     startFrame: number;
     endFrame: number;
@@ -333,9 +349,7 @@ export function generateCameraMotion(
     transitionDir?: number;
   }
   const cutDefs: CutDef[] = [];
-
-  const cutStartFrames = [0, ...validCutFrames.map((v) => v.frame)];
-  const cutStartTimes = [0, ...validCutFrames.map((v) => v.time)];
+  const cuts: CutInfo[] = [];
 
   const usageMap = new Map<CameraPattern, number>();
   for (const p of patterns) usageMap.set(p, 0);
@@ -355,7 +369,8 @@ export function generateCameraMotion(
     const isLocked = existing?.isLocked ?? false;
 
     let pattern: CameraPattern;
-    if (existing && existing.isLocked) {
+    // 既存カットがある場合（手動分割・結合・ロック含む）はそのパターンを保持
+    if (existing) {
       pattern = existing.pattern;
     } else {
       pattern = selectPatternWithEnergy(
@@ -520,12 +535,11 @@ export function generateCameraMotion(
     }
 
     // ========================================================
-    // 【新設・スライド専用】4点キーフレーム補間
+    // 【スライド専用】4点キーフレーム補間
     // (画面外からスライドイン -> 中央ホールド -> 画面外へスライドアウト)
     // ========================================================
     if (cut.pattern === 'slide') {
       const cutLength = cut.endFrame - cut.startFrame;
-      // カット尺に合わせてイン・アウト時間を計算（約0.25〜0.4秒）
       const slideInFrames = Math.min(12, Math.max(6, Math.floor(cutLength * 0.20)));
       const slideOutFrames = Math.min(12, Math.max(6, Math.floor(cutLength * 0.20)));
 
@@ -535,24 +549,21 @@ export function generateCameraMotion(
       const lookAtIn = getLookAt(frameIn);
       const lookAtOut = getLookAt(frameOut);
 
-      // 開始キーの補間曲線を「Ease-Out（画面外から飛び込んできて中央へ滑らかに着地）」に設定
       keyframePoints[keyframePoints.length - 1].customInterp = easeOutInterp;
 
-      // キー2: スライドイン完了・中央ホールド開始（キャラを画面中央に完璧に捉える）
       keyframePoints.push({
         ...startState,
         target: { x: lookAtIn.x, y: lookAtIn.y - 2.5, z: lookAtIn.z },
         frame: frameIn,
-        hardCut: false, // ここからホールド終了までは中央でキャラを安定追従
+        hardCut: false,
       });
 
-      // キー3: 中央ホールド終了・スライドアウト開始（ここからEase-Inで加速して画面外へ抜ける）
       keyframePoints.push({
         ...endState,
         target: { x: lookAtOut.x, y: lookAtOut.y - 2.5, z: lookAtOut.z },
         frame: frameOut,
         hardCut: false,
-        customInterp: easeInInterp, // 画面外へ向かって加速アウト
+        customInterp: easeInInterp,
       });
     }
 
@@ -603,7 +614,6 @@ export function generateCameraMotion(
       allowedFrames.add(cut.startFrame + snapFrames);
     }
 
-    // スライドの中間キーフレーム（イン完了 & アウト開始）を許可
     if (cut.pattern === 'slide') {
       const cutLength = cut.endFrame - cut.startFrame;
       const slideInFrames = Math.min(12, Math.max(6, Math.floor(cutLength * 0.20)));

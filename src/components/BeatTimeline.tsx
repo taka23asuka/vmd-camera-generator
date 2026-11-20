@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useMemo, useRef, useEffect, useState } from 'react';
+import { useMemo, useRef, useEffect, useState, useCallback } from 'react';
 import {
   CAMERA_PATTERNS,
   type AudioAnalysisResult,
@@ -17,7 +17,13 @@ import {
   Play,
   Pause,
   RotateCcw,
+  Scissors,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+
+const FPS = 30;
 
 // ============================================================
 // コンポーネント Props 定義
@@ -42,12 +48,16 @@ interface BeatTimelineProps {
   duration?: number;
   /** 再生中かどうかのフラグ */
   isPlaying?: boolean;
-  /** 【新設】再生/一時停止切り替えコールバック */
+  /** 再生/一時停止切り替えコールバック */
   onTogglePlay?: () => void;
-  /** 【新設】シークバー操作コールバック */
+  /** シークバー操作コールバック */
   onSeek?: (time: number) => void;
-  /** 【新設】最初に戻るコールバック */
+  /** 最初に戻るコールバック */
   onResetTime?: () => void;
+  /** 【新設】現在の再生フレームでカットを分割するコールバック */
+  onSplitCut?: (splitFrame: number) => void;
+  /** 【新設】指定カットを削除して前と結合するコールバック */
+  onDeleteCut?: (cutIndex: number) => void;
 }
 
 // ============================================================
@@ -97,12 +107,14 @@ export function BeatTimeline({
   onTogglePlay,
   onSeek,
   onResetTime,
+  onSplitCut,
+  onDeleteCut,
 }: BeatTimelineProps) {
-  // 自動追従スクロール用：各カットカードのDOM参照を保持
   const cardRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-
-  // 【新設】波形表示の開閉トグル（縦幅節約のためデフォルトは非表示）
   const [showWaveform, setShowWaveform] = useState(false);
+
+  const totalDuration = duration || audio?.duration || 1;
+  const currentFrame = Math.floor(currentTime * FPS);
 
   const energyBars = useMemo(() => {
     if (!audio || audio.energyCurve.length === 0) return [];
@@ -145,6 +157,43 @@ export function BeatTimeline({
     }
   }, [activePlayingIndex, currentTime]);
 
+  /**
+   * 1フレーム単位のコマ送り・コマ戻しハンドラ
+   */
+  const handleStepFrame = useCallback(
+    (deltaFrames: number) => {
+      const nextTime = Math.max(0, Math.min(totalDuration, currentTime + deltaFrames * (1 / FPS)));
+      onSeek?.(parseFloat(nextTime.toFixed(4)));
+    },
+    [currentTime, totalDuration, onSeek]
+  );
+
+  /**
+   * キーボードの「← / →」キーで1フレームコマ送り/コマ戻し
+   */
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handleStepFrame(-1);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleStepFrame(1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleStepFrame]);
+
   // 時間表記フォーマット (例: 01:23.4)
   const formatTime = (t: number) => {
     const m = Math.floor(t / 60);
@@ -153,7 +202,6 @@ export function BeatTimeline({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms}`;
   };
 
-  const totalDuration = duration || audio?.duration || 1;
   const playheadPct = totalDuration > 0 ? Math.min(100, Math.max(0, (currentTime / totalDuration) * 100)) : 0;
 
   if (!audio) {
@@ -170,19 +218,31 @@ export function BeatTimeline({
   return (
     <div className="space-y-2.5 min-w-0">
       {/* ---------------------------------------------------- */}
-      {/* 1. 【統合】メディアコントロール ＆ シークバー ＆ 指標   */}
+      {/* 1. メディアコントロール ＆ コマ送り ＆ 分割ツールバー   */}
       {/* ---------------------------------------------------- */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-2">
-        {/* 左側: 再生/停止ボタン ＆ 時間表示 */}
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-slate-700/50 bg-slate-900/80 px-3 py-1.5">
+        {/* 左側: 再生/停止、1Fコマ送り、時間表示 */}
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={onResetTime}
             className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-slate-200"
             title="最初に戻る"
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={13} />
           </button>
+
+          {/* 【新設】コマ戻しボタン (-1フレーム) */}
+          <button
+            type="button"
+            onClick={() => handleStepFrame(-1)}
+            className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-cyan-300"
+            title="1フレーム戻る (←キー)"
+          >
+            <ChevronLeft size={15} />
+          </button>
+
+          {/* 再生/一時停止ボタン */}
           <button
             type="button"
             onClick={onTogglePlay}
@@ -191,15 +251,30 @@ export function BeatTimeline({
           >
             {isPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}
           </button>
-          <div className="font-mono text-[11px] text-slate-300">
+
+          {/* 【新設】コマ送りボタン (+1フレーム) */}
+          <button
+            type="button"
+            onClick={() => handleStepFrame(1)}
+            className="rounded p-1 text-slate-400 transition-colors hover:bg-slate-800 hover:text-cyan-300"
+            title="1フレーム進む (→キー)"
+          >
+            <ChevronRight size={15} />
+          </button>
+
+          {/* 時間 & 現在フレーム表示 */}
+          <div className="font-mono text-[11px] text-slate-300 ml-1">
             <span className="text-cyan-400 font-semibold">{formatTime(currentTime)}</span>
             <span className="text-slate-600 mx-1">/</span>
             <span className="text-slate-500">{formatTime(totalDuration)}</span>
+            <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.2 text-[10px] text-slate-400 border border-slate-700/60">
+              F: {currentFrame}
+            </span>
           </div>
         </div>
 
-        {/* 中央: 横に伸びるシークバースライダー */}
-        <div className="flex-1 min-w-[140px] px-2">
+        {/* 中央: シークバースライダー */}
+        <div className="flex-1 min-w-[120px] px-1">
           <input
             type="range"
             min={0}
@@ -211,14 +286,28 @@ export function BeatTimeline({
           />
         </div>
 
-        {/* 右側: 波形トグルボタン ＆ ミニサマリーバッジ */}
+        {/* 右側: 分割ボタン ＆ 波形トグル ＆ サマリー */}
         <div className="flex items-center gap-2">
+          {/* 【新設】カット分割ボタン (スプリット ✂) */}
+          {cuts.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onSplitCut?.(currentFrame)}
+              className="flex items-center gap-1 rounded bg-cyan-950/80 px-2 py-1 text-[11px] font-medium text-cyan-300 border border-cyan-700/60 transition-all hover:bg-cyan-900/60 hover:border-cyan-400 shadow-sm"
+              title="現在の再生フレーム位置でカットを2つに分割"
+            >
+              <Scissors size={12} className="text-cyan-400" />
+              <span>ここで分割</span>
+            </button>
+          )}
+
+          {/* 波形トグルボタン */}
           <button
             type="button"
             onClick={() => setShowWaveform(!showWaveform)}
             className={`flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium transition-all ${showWaveform
-              ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-              : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200 border border-slate-700/50'
+                ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
+                : 'bg-slate-800/80 text-slate-400 hover:bg-slate-700/60 hover:text-slate-200 border border-slate-700/50'
               }`}
             title="エネルギー波形の表示/非表示を切り替え"
           >
@@ -226,10 +315,7 @@ export function BeatTimeline({
             <span>波形</span>
           </button>
 
-          <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-400 border-l border-slate-700/60 pl-2">
-            <span className="text-slate-500">BPM:</span>
-            <span className="font-bold text-slate-300">{audio.bpm}</span>
-            <span className="text-slate-600 mx-0.5">•</span>
+          <div className="hidden sm:flex items-center gap-1 text-[11px] text-slate-400 border-l border-slate-700/60 pl-2">
             <span className="font-bold text-green-400">{cuts.length}</span>
             <span className="text-slate-500">カット</span>
           </div>
@@ -294,8 +380,8 @@ export function BeatTimeline({
                       )}
                       <div
                         className={`rounded-t transition-all ${isSelected
-                          ? 'w-2.5 ring-2 ring-white brightness-125'
-                          : 'w-1.5 group-hover:scale-y-110 group-hover:brightness-110'
+                            ? 'w-2.5 ring-2 ring-white brightness-125'
+                            : 'w-1.5 group-hover:scale-y-110 group-hover:brightness-110'
                           }`}
                         style={{
                           backgroundColor: color,
@@ -344,6 +430,8 @@ export function BeatTimeline({
                 const isLocked = !!cut.isLocked;
                 const isSelected = selectedCutIndex === cut.index;
                 const isPlayingCut = activePlayingIndex === cut.index && isPlaying;
+                // 第1カット(0秒)以外は削除・前と結合が可能
+                const canDelete = cut.index > 0 && cuts.length > 1;
 
                 return (
                   <div
@@ -354,14 +442,15 @@ export function BeatTimeline({
                     }}
                     onClick={() => onSelectCut?.(cut)}
                     className={`flex min-w-[125px] cursor-pointer flex-col justify-between rounded-lg border p-2 transition-all ${isSelected
-                      ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-500/20 ring-2 ring-cyan-400'
-                      : isPlayingCut
-                        ? 'border-red-500/80 bg-red-950/20 shadow-md shadow-red-500/10'
-                        : isLocked
-                          ? 'border-cyan-500/60 bg-cyan-950/20 shadow-sm shadow-cyan-500/10 hover:border-cyan-400'
-                          : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/60'
+                        ? 'border-cyan-400 bg-cyan-950/40 shadow-lg shadow-cyan-500/20 ring-2 ring-cyan-400'
+                        : isPlayingCut
+                          ? 'border-red-500/80 bg-red-950/20 shadow-md shadow-red-500/10'
+                          : isLocked
+                            ? 'border-cyan-500/60 bg-cyan-950/20 shadow-sm shadow-cyan-500/10 hover:border-cyan-400'
+                            : 'border-slate-700/50 bg-slate-800/40 hover:border-slate-500 hover:bg-slate-800/60'
                       }`}
                   >
+                    {/* カード上部: 番号 ＋ PLAYバッジ ＋ 【新設】削除ボタン ＆ 開始秒数 */}
                     <div className="flex items-center justify-between text-[11px]">
                       <div className="flex items-center gap-1">
                         <span className={`font-bold ${isSelected ? 'text-cyan-300' : isPlayingCut ? 'text-red-300' : 'text-slate-300'}`}>
@@ -374,7 +463,24 @@ export function BeatTimeline({
                           </span>
                         )}
                       </div>
-                      <span className="text-[10px] text-slate-500">{cut.time.toFixed(1)}s</span>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-slate-500">{cut.time.toFixed(1)}s</span>
+                        {/* 【新設】カット削除（前と結合）ボタン */}
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteCut?.(cut.index);
+                            }}
+                            className="rounded p-0.5 text-slate-500 transition-colors hover:bg-red-500/20 hover:text-red-400"
+                            title="このカットを削除して前のカットと結合"
+                          >
+                            <Trash2 size={11} />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="my-1.5" onClick={(e) => e.stopPropagation()}>
@@ -401,8 +507,8 @@ export function BeatTimeline({
                         onToggleLock?.(cut.index);
                       }}
                       className={`flex w-full items-center justify-center gap-1 rounded py-0.5 text-[10px] font-medium transition-all ${isLocked
-                        ? 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
-                        : 'bg-slate-700/30 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
+                          ? 'bg-cyan-500/20 text-cyan-300 hover:bg-cyan-500/30'
+                          : 'bg-slate-700/30 text-slate-400 hover:bg-slate-700/50 hover:text-slate-200'
                         }`}
                     >
                       {isLocked ? (

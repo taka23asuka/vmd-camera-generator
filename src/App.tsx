@@ -12,6 +12,8 @@ import {
   FolderOpen,
   Info,
   Box,
+  Undo2,
+  Redo2,
 } from 'lucide-react';
 import packageJson from '../package.json';
 import { DropZone } from '@/components/DropZone';
@@ -19,11 +21,13 @@ import { SettingsPanel } from '@/components/SettingsPanel';
 import { BeatTimeline } from '@/components/BeatTimeline';
 import { ProgressBar } from '@/components/ProgressBar';
 import { CameraPreview } from '@/components/CameraPreview';
+import { HelpModal } from '@/components/HelpModal';
 import { analyzeAudio } from '@/lib/audio';
 import { parseVMD, writeCameraVMD } from '@/lib/vmd';
 import { generateCameraMotion, downloadVMD, type GenerationResult } from '@/lib/camera';
 import { exportProject, importProject, type ProjectData } from '@/lib/project';
 import { extractModelEyeHeight, type ModelEyeInfo } from '@/lib/model';
+import { splitCutAtFrame, removeCutAndMerge } from '@/lib/cutEditor';
 import type {
   AudioAnalysisResult,
   CameraGenerationOptions,
@@ -34,14 +38,20 @@ import type {
 
 type AppPhase = 'idle' | 'analyzing' | 'generating' | 'done' | 'error';
 
+/** アンドゥ/リドゥで保存する履歴スナップショット */
+interface HistoryState {
+  options: CameraGenerationOptions;
+  generationResult: GenerationResult | null;
+}
+
 export default function App() {
   // ------------------------------------------------------------
   // 1. ファイルおよび解析データの状態管理 (Model State)
   // ------------------------------------------------------------
   const [vmdFile, setVmdFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [modelFile, setModelFile] = useState<File | null>(null); // 【新設】PMX/PMDモデルファイル
-  const [modelEyeInfo, setModelEyeInfo] = useState<ModelEyeInfo | null>(null); // 【新設】検出された目線情報
+  const [modelFile, setModelFile] = useState<File | null>(null);
+  const [modelEyeInfo, setModelEyeInfo] = useState<ModelEyeInfo | null>(null);
 
   const [vmdParseResult, setVmdParseResult] = useState<VMDParseResult | null>(null);
   const [audioAnalysis, setAudioAnalysis] = useState<AudioAnalysisResult | null>(null);
@@ -55,6 +65,7 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState('');
   const [showSettings, setShowSettings] = useState(true);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   // ------------------------------------------------------------
   // 3. タイムライン・プレビュー連携状態 (Playback State)
@@ -67,7 +78,7 @@ export default function App() {
   const [playTrigger, setPlayTrigger] = useState(0);
 
   // ------------------------------------------------------------
-  // 4. カメラ生成オプション設定
+  // 4. カメラ生成オプション設定 ＆ アンドゥ/リドゥ履歴スタック
   // ------------------------------------------------------------
   const [options, setOptions] = useState<CameraGenerationOptions>({
     cameraMode: 'auto',
@@ -83,8 +94,146 @@ export default function App() {
     intensity: 1.0,
   });
 
+  const [past, setPast] = useState<HistoryState[]>([]);
+  const [future, setFuture] = useState<HistoryState[]>([]);
+
+  const setOptionsAndRecord = useCallback(
+    (newOptions: CameraGenerationOptions | ((prev: CameraGenerationOptions) => CameraGenerationOptions),
+      newResult?: GenerationResult | null) => {
+      setOptions((currentOptions) => {
+        const resolvedOptions = typeof newOptions === 'function' ? newOptions(currentOptions) : newOptions;
+        setPast((currPast) => [...currPast, { options: currentOptions, generationResult }]);
+        setFuture([]);
+        return resolvedOptions;
+      });
+
+      if (newResult !== undefined) {
+        setGenerationResult(newResult);
+        if (newResult) {
+          generatedBufferRef.current = writeCameraVMD(newResult.cameraFrames);
+          setPhase('done');
+        } else {
+          generatedBufferRef.current = null;
+          setPhase('idle');
+          setSelectedCutIndex(null);
+          setSeekRequest(null);
+          setPreviewTime(0);
+          setIsPlaying(false);
+        }
+      }
+    },
+    [generationResult]
+  );
+
   const generatedBufferRef = useRef<ArrayBuffer | null>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * 意味のある編集操作が行われたときだけ、履歴（past）にスナップショットを記録する
+   */
+  const recordHistory = useCallback(
+    (newOptions: CameraGenerationOptions, newResult: GenerationResult | null) => {
+      setPast((currPast) => [...currPast, { options, generationResult }]);
+      setFuture([]); // 新しい操作を行ったら未来スタックはクリア
+      setOptions(newOptions);
+      setGenerationResult(newResult);
+
+      if (newResult) {
+        generatedBufferRef.current = writeCameraVMD(newResult.cameraFrames);
+        setPhase('done');
+      } else {
+        generatedBufferRef.current = null;
+        setPhase('idle');
+        setSelectedCutIndex(null);
+        setSeekRequest(null);
+        setPreviewTime(0);
+        setIsPlaying(false);
+      }
+    },
+    [options, generationResult]
+  );
+
+  /**
+   * アンドゥ（元に戻す）実行
+   */
+  const handleUndo = useCallback(() => {
+    if (past.length === 0) return;
+
+    const previous = past[past.length - 1];
+    const newPast = past.slice(0, past.length - 1);
+
+    setFuture((currFuture) => [{ options, generationResult }, ...currFuture]);
+    setPast(newPast);
+    setOptions(previous.options);
+    setGenerationResult(previous.generationResult);
+
+    if (previous.generationResult) {
+      generatedBufferRef.current = writeCameraVMD(previous.generationResult.cameraFrames);
+      setPhase('done');
+    } else {
+      generatedBufferRef.current = null;
+      setPhase('idle');
+      setSelectedCutIndex(null);
+      setSeekRequest(null);
+      setPreviewTime(0);
+      setIsPlaying(false);
+    }
+  }, [past, options, generationResult]);
+
+  /**
+   * リドゥ（やり直す）実行
+   */
+  const handleRedo = useCallback(() => {
+    if (future.length === 0) return;
+
+    const next = future[0];
+    const newFuture = future.slice(1);
+
+    setPast((currPast) => [...currPast, { options, generationResult }]);
+    setFuture(newFuture);
+    setOptions(next.options);
+    setGenerationResult(next.generationResult);
+
+    if (next.generationResult) {
+      generatedBufferRef.current = writeCameraVMD(next.generationResult.cameraFrames);
+      setPhase('done');
+    } else {
+      generatedBufferRef.current = null;
+      setPhase('idle');
+      setSelectedCutIndex(null);
+      setSeekRequest(null);
+      setPreviewTime(0);
+      setIsPlaying(false);
+    }
+  }, [future, options, generationResult]);
+
+  // キーボードショートカット (Ctrl+Z / Ctrl+Y)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, handleRedo]);
 
   // ------------------------------------------------------------
   // 5. 算出プロパティ
@@ -93,6 +242,8 @@ export default function App() {
   const canGenerate = vmdFile !== null && audioFile !== null && !isWorking;
   const canExport = phase === 'done' && generationResult !== null && !isWorking;
   const canImport = vmdFile !== null && audioFile !== null && !isWorking;
+  const canUndo = past.length > 0;
+  const canRedo = future.length > 0;
 
   // ------------------------------------------------------------
   // 6. イベントハンドラ群 (Controller Logic)
@@ -115,6 +266,8 @@ export default function App() {
     setPreviewTime(0);
     setPreviewDuration(0);
     setIsPlaying(false);
+    setPast([]);
+    setFuture([]);
     generatedBufferRef.current = null;
   }, []);
 
@@ -139,10 +292,6 @@ export default function App() {
     setPhase('idle');
   }, []);
 
-  /**
-   * 【新設】PMX/PMDモデルファイル選択時の処理
-   * バイナリから目線ボーン（両目・頭など）の初期Y座標を抽出し、options.eyeHeight を自動更新
-   */
   const handleModelSelect = useCallback(async (file: File) => {
     setErrorMsg('');
     setModelFile(file);
@@ -152,20 +301,20 @@ export default function App() {
 
       if (eyeInfo) {
         setModelEyeInfo(eyeInfo);
-        // 目線の高さを自動設定！
-        setOptions((prev) => ({
-          ...prev,
-          eyeHeight: eyeInfo.eyeHeight,
-        }));
+        const newOpts = { ...options, eyeHeight: eyeInfo.eyeHeight };
+        if (generationResult) {
+          recordHistory(newOpts, generationResult);
+        } else {
+          setOptions(newOpts);
+        }
       } else {
         setModelEyeInfo(null);
-        console.warn('[Model] Could not detect eye bone in model file.');
       }
     } catch (e) {
       console.error('[Model] Unexpected error:', e);
       setModelEyeInfo(null);
     }
-  }, []);
+  }, [options, generationResult, recordHistory]);
 
   const handleGenerate = useCallback(async () => {
     if (!audioFile || !vmdFile) return;
@@ -197,10 +346,8 @@ export default function App() {
         },
         (p) => setProgress(p)
       );
-      setGenerationResult(result);
 
-      const vmdBuffer = writeCameraVMD(result.cameraFrames);
-      generatedBufferRef.current = vmdBuffer;
+      recordHistory(options, result);
 
       setProgress(1);
       setProgressLabel('完了');
@@ -212,7 +359,7 @@ export default function App() {
       );
       setPhase('error');
     }
-  }, [audioFile, vmdFile, vmdParseResult, options, generationResult]);
+  }, [audioFile, vmdFile, vmdParseResult, options, generationResult, recordHistory]);
 
   const handleDownload = useCallback(() => {
     if (!generatedBufferRef.current) return;
@@ -221,40 +368,34 @@ export default function App() {
   }, [audioFile]);
 
   const handleToggleLock = useCallback((cutIndex: number) => {
-    setGenerationResult((prev) => {
-      if (!prev) return null;
-      const updatedCuts = prev.cuts.map((c) =>
-        c.index === cutIndex ? { ...c, isLocked: !c.isLocked } : c
-      );
-      return { ...prev, cuts: updatedCuts };
-    });
-  }, []);
+    if (!generationResult) return;
+    const updatedCuts = generationResult.cuts.map((c) =>
+      c.index === cutIndex ? { ...c, isLocked: !c.isLocked } : c
+    );
+    const newResult = { ...generationResult, cuts: updatedCuts };
+    recordHistory(options, newResult);
+  }, [generationResult, options, recordHistory]);
 
   const handleChangePattern = useCallback(
     (cutIndex: number, newPattern: CameraPattern) => {
-      if (!audioAnalysis) return;
+      if (!audioAnalysis || !generationResult) return;
 
-      setGenerationResult((prev) => {
-        if (!prev) return null;
+      const updatedCuts = generationResult.cuts.map((c) =>
+        c.index === cutIndex ? { ...c, pattern: newPattern, isLocked: c.isLocked } : c
+      );
 
-        const updatedCuts = prev.cuts.map((c) =>
-          c.index === cutIndex ? { ...c, pattern: newPattern, isLocked: true } : c
-        );
+      const newResult = generateCameraMotion(
+        audioAnalysis,
+        vmdParseResult?.data ?? null,
+        {
+          ...options,
+          existingCuts: updatedCuts,
+        }
+      );
 
-        const newResult = generateCameraMotion(
-          audioAnalysis,
-          vmdParseResult?.data ?? null,
-          {
-            ...options,
-            existingCuts: updatedCuts,
-          }
-        );
-
-        generatedBufferRef.current = writeCameraVMD(newResult.cameraFrames);
-        return newResult;
-      });
+      recordHistory(options, newResult);
     },
-    [audioAnalysis, vmdParseResult, options]
+    [audioAnalysis, generationResult, vmdParseResult, options, recordHistory]
   );
 
   const handleSelectCut = useCallback((cut: CutInfo) => {
@@ -275,6 +416,61 @@ export default function App() {
     setPreviewTime(0);
     setSeekRequest({ time: 0, nonce: Date.now() });
   }, []);
+
+  const handleSplitCut = useCallback(
+    (splitFrame: number) => {
+      if (!generationResult || !audioAnalysis) return;
+
+      const totalFrames = Math.ceil(audioAnalysis.duration * 30);
+      const newCuts = splitCutAtFrame(
+        generationResult.cuts,
+        splitFrame,
+        totalFrames,
+        options.patterns
+      );
+
+      if (!newCuts) return;
+
+      const newResult = generateCameraMotion(
+        audioAnalysis,
+        vmdParseResult?.data ?? null,
+        {
+          ...options,
+          existingCuts: newCuts,
+        }
+      );
+
+      recordHistory(options, newResult);
+    },
+    [generationResult, audioAnalysis, vmdParseResult, options, recordHistory]
+  );
+
+  const handleDeleteCut = useCallback(
+    (cutIndex: number) => {
+      if (!generationResult || !audioAnalysis) return;
+
+      const newCuts = removeCutAndMerge(generationResult.cuts, cutIndex);
+      if (!newCuts) return;
+
+      const newResult = generateCameraMotion(
+        audioAnalysis,
+        vmdParseResult?.data ?? null,
+        {
+          ...options,
+          existingCuts: newCuts,
+        }
+      );
+
+      recordHistory(options, newResult);
+
+      if (selectedCutIndex === cutIndex) {
+        setSelectedCutIndex(Math.max(0, cutIndex - 1));
+      } else if (selectedCutIndex !== null && selectedCutIndex > cutIndex) {
+        setSelectedCutIndex(selectedCutIndex - 1);
+      }
+    },
+    [generationResult, audioAnalysis, vmdParseResult, options, selectedCutIndex, recordHistory]
+  );
 
   const handleExportProject = useCallback(() => {
     if (!canExport || !generationResult) return;
@@ -317,7 +513,6 @@ export default function App() {
           ...projectData.options,
           existingCuts: projectData.cuts,
         };
-        setOptions(newOptions);
 
         setPhase('generating');
         setProgressLabel('設定ファイルの内容でタイムラインを再構築中...');
@@ -335,8 +530,7 @@ export default function App() {
           newOptions
         );
 
-        setGenerationResult(newResult);
-        generatedBufferRef.current = writeCameraVMD(newResult.cameraFrames);
+        recordHistory(newOptions, newResult);
         setProgress(1);
         setProgressLabel('完了');
         setPhase('done');
@@ -348,7 +542,7 @@ export default function App() {
         e.target.value = '';
       }
     },
-    [audioFile, vmdFile, audioAnalysis, vmdParseResult]
+    [audioFile, vmdFile, audioAnalysis, vmdParseResult, recordHistory]
   );
 
   // ------------------------------------------------------------
@@ -396,13 +590,38 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* ヘッダー右側アクション（アンドゥ・リドゥ ＆ 保存・読込・リセット ＆ ヘルプ） */}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleUndo}
+            disabled={!canUndo}
+            className="flex items-center gap-1 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-30"
+            title="直前の操作に戻す (Ctrl+Z)"
+          >
+            <Undo2 size={13} className="text-cyan-400" />
+            <span className="hidden sm:inline">戻す</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleRedo}
+            disabled={!canRedo}
+            className="flex items-center gap-1 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-30"
+            title="やり直す (Ctrl+Y)"
+          >
+            <Redo2 size={13} className="text-cyan-400" />
+            <span className="hidden sm:inline">進む</span>
+          </button>
+
+          <div className="mx-1 h-4 w-px bg-slate-700/60" />
+
           <button
             type="button"
             onClick={handleExportProject}
             disabled={!canExport}
-            className="flex items-center gap-1.5 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700/60 disabled:hover:text-slate-300"
-            title={canExport ? '現在のカメラ設定とカット構成をJSONファイルとして保存' : 'カメラモーション生成後に保存できます'}
+            className="flex items-center gap-1.5 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            title={canExport ? 'プロジェクトを保存' : '生成後に保存できます'}
           >
             <Save size={13} className="text-cyan-400" />
             <span>保存</span>
@@ -412,8 +631,8 @@ export default function App() {
             type="button"
             onClick={() => projectInputRef.current?.click()}
             disabled={!canImport}
-            className="flex items-center gap-1.5 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-700/60 disabled:hover:text-slate-300"
-            title={canImport ? '保存したJSONファイルを読み込んで設定とカット構成を完全再現' : 'VMDと音声をセットすると読込可能になります'}
+            className="flex items-center gap-1.5 rounded-md border border-slate-700/60 bg-slate-800/70 px-2.5 py-1 text-xs text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm disabled:cursor-not-allowed disabled:opacity-40"
+            title={canImport ? 'プロジェクトを読込' : 'VMDと音声をセットすると読込可能になります'}
           >
             <FolderOpen size={13} className="text-cyan-400" />
             <span>読込</span>
@@ -423,11 +642,24 @@ export default function App() {
             type="button"
             onClick={reset}
             className="flex items-center gap-1 rounded-md border border-slate-700/60 bg-slate-800/40 px-2.5 py-1 text-xs text-slate-400 transition-colors hover:border-slate-500 hover:text-white"
-            title="すべて初期状態にリセット"
+            title="リセット"
           >
             <RotateCcw size={13} />
             <span>リセット</span>
           </button>
+
+          <div className="mx-0.5 h-4 w-px bg-slate-700/60" />
+
+          <button
+            type="button"
+            onClick={() => setIsHelpOpen(true)}
+            className="flex items-center justify-center h-7 w-7 rounded-md border border-slate-700/60 bg-slate-800/70 text-slate-300 transition-colors hover:border-cyan-500/50 hover:text-cyan-300 shadow-sm"
+            title="使い方・ショートカットガイド"
+            aria-label="ヘルプ"
+          >
+            <Info size={14} className="text-cyan-400" />
+          </button>
+
         </div>
       </header>
 
@@ -466,10 +698,10 @@ export default function App() {
 
           {/* 右カラム：ファイル入力・設定・生成パネル */}
           <div className="space-y-3 min-w-0">
-            {/* 1. ファイル入力セクション（VMD、音声 ＋ 【新設】PMXモデル） */}
+            {/* 1. ファイル入力セクション */}
             <div className="rounded-xl border border-slate-700/40 bg-slate-800/20 p-3 space-y-2">
               <SectionHeader step="1" title="ファイル入力" icon={<Video size={14} />} />
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid gap-2.5 sm:grid-cols-3">
                 <DropZone
                   label="キャラクターVMD"
                   description=".vmdファイルをアップロード"
@@ -497,7 +729,6 @@ export default function App() {
                   }}
                   accentColor="#3b82f6"
                 />
-                {/* 【新設】PMX / PMD モデルドロップゾーン（任意） */}
                 <DropZone
                   label="モデル（任意）"
                   description=".pmx または .pmd で目線を自動設定"
@@ -508,11 +739,10 @@ export default function App() {
                   onFileClear={() => {
                     setModelFile(null);
                     setModelEyeInfo(null);
-                    // 【改善】モデルクリア時は目線の高さを初期値(15)に自動リセット！
-                    setOptions((prev) => ({
+                    setOptionsAndRecord((prev) => ({
                       ...prev,
                       eyeHeight: 15,
-                    }));
+                    }), generationResult);
                   }}
                   accentColor="#a855f7"
                 />
@@ -527,7 +757,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* 【新設】モデル目線検出バッジ */}
                 {modelFile && modelEyeInfo && (
                   <div className="flex items-center gap-1.5 rounded-lg border border-purple-800/40 bg-purple-900/15 px-2.5 py-1 text-xs text-purple-300/90">
                     <Box size={13} className="text-purple-400" />
@@ -556,7 +785,7 @@ export default function App() {
                 <div className="border-t border-slate-700/40 p-3 max-h-[260px] overflow-y-auto">
                   <SettingsPanel
                     options={options}
-                    onChange={setOptions}
+                    onChange={(newOpts) => setOptionsAndRecord(newOpts, generationResult)}
                     disabled={isWorking}
                   />
                 </div>
@@ -624,26 +853,35 @@ export default function App() {
       </main>
 
       {/* ======================================================== */}
-      {/* 3. フッター領域（固定）                                    */}
+      {/* 3. フッター領域（生成完了時のみ固定表示）                  */}
       {/* ======================================================== */}
-      <footer className="relative z-30 shrink-0 border-t border-slate-800/80 bg-slate-900/95 px-4 py-2.5 backdrop-blur-md shadow-2xl">
-        <div className="mx-auto max-w-7xl">
-          <BeatTimeline
-            audio={audioAnalysis}
-            cuts={generationResult?.cuts ?? []}
-            onToggleLock={handleToggleLock}
-            onChangePattern={handleChangePattern}
-            onSelectCut={handleSelectCut}
-            selectedCutIndex={selectedCutIndex}
-            currentTime={previewTime}
-            duration={previewDuration}
-            isPlaying={isPlaying}
-            onTogglePlay={handleTogglePlay}
-            onSeek={handleSeek}
-            onResetTime={handleResetTime}
-          />
-        </div>
-      </footer>
+      {generationResult && (
+        <footer className="relative z-30 shrink-0 border-t border-slate-800/80 bg-slate-900/95 px-4 py-2.5 backdrop-blur-md shadow-2xl">
+          <div className="mx-auto max-w-7xl">
+            <BeatTimeline
+              audio={audioAnalysis}
+              cuts={generationResult.cuts}
+              onToggleLock={handleToggleLock}
+              onChangePattern={handleChangePattern}
+              onSelectCut={handleSelectCut}
+              selectedCutIndex={selectedCutIndex}
+              currentTime={previewTime}
+              duration={previewDuration}
+              isPlaying={isPlaying}
+              onTogglePlay={handleTogglePlay}
+              onSeek={handleSeek}
+              onResetTime={handleResetTime}
+              onSplitCut={handleSplitCut}
+              onDeleteCut={handleDeleteCut}
+            />
+          </div>
+        </footer>
+      )}
+
+      {/* ======================================================== */}
+      {/* ヘルプモーダルポップアップ                                 */}
+      {/* ======================================================== */}
+      <HelpModal isOpen={isHelpOpen} onClose={() => setIsHelpOpen(false)} />
     </div>
   );
 }
