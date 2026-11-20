@@ -3,7 +3,8 @@
 音楽のビート（波形エネルギー）を解析し、MikuMikuDance（MMD）用のカメラモーション（`.vmd`）をブラウザ上で自動生成するWebアプリケーションです。  
 主に **ショート動画（縦画面 9:16）やダンスMV** に最適化されたダイナミックなカメラワークを出力します。
 
-🔗 **Web App:** [https://vmd-camera-generator.vercel.app](https://vmd-camera-generator.vercel.app)
+🔗 **Web App:** [https://taka23asuka.github.io/vmd-camera-generator/](https://taka23asuka.github.io/vmd-camera-generator/)  
+🔗 **Mirror (Vercel):** [https://vmd-camera-generator.vercel.app](https://vmd-camera-generator.vercel.app)
 
 ---
 
