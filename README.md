@@ -6,6 +6,9 @@
 🔗 **Web App:** [https://taka23asuka.github.io/vmd-camera-generator/](https://taka23asuka.github.io/vmd-camera-generator/)  
 🔗 **Mirror (Vercel):** [https://vmd-camera-generator.vercel.app](https://vmd-camera-generator.vercel.app)
 
+> 🔒 **完全ローカル処理（プライバシー・規約遵守の安心設計）**  
+> アップロードした音源、モーション（`.vmd`）、モデル（`.pmx / .pmd`）のデータは **外部サーバーへ一切送信されません**。  
+
 ---
 
 ## 🌟 主な機能
@@ -83,6 +86,10 @@
   > **【クレジット記載例】**  
   > カメラ：VMD Camera Generator (taka23)  
   > Camera: VMD Camera Generator by taka23
+
+### 3. プライバシー ＆ セキュリティ（完全クライアント動作の保証）
+本アプリケーションは、すべての処理がユーザーのブラウザ内（端末のメモリ上）でのみ完結する完全クライアントサイド設計です。
+- 読み込ませたファイルデータ（音源、VMD、PMX/PMD）が外部サーバーに送信・保存・転送されることは技術的に一切ありません。
 
 #### 免責事項
 本ツールの利用によって生じたいかなる損害・トラブル（アップロードした音源やモデルデータの権利関係等を含む）について、本ツールの開発者は一切の責任を負いません。各種素材の利用規約に従ってご使用ください。

@@ -5,6 +5,15 @@
 
 ---
 
+## [v1.0.2]
+
+### 追加 (Added)
+- **アクセス解析 (Google Analytics 4) の導入:**
+  - GA4によるWebサイトの訪問状況計測機能を追加。
+  - `.env` ファイルおよび GitHub Secrets / Vercel Environment Variables を用いた安全なID管理システムを構築。
+
+---
+
 ## [v1.0.1]
 
 ### 変更・改善 (Changed)

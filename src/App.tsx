@@ -1,3 +1,4 @@
+import ReactGA from 'react-ga4';
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -207,8 +208,16 @@ export default function App() {
     }
   }, [future, options, generationResult]);
 
-  // キーボードショートカット (Ctrl+Z / Ctrl+Y)
+  // キーボードショートカット ＆ GA4初期化
   useEffect(() => {
+    // 1. GA4 初期化
+    const gaId = import.meta.env.VITE_GA_MEASUREMENT_ID;
+    if (gaId) {
+      ReactGA.initialize(gaId);
+      ReactGA.send({ hitType: 'pageview', page: window.location.pathname });
+    }
+
+    // 2. キーボードショートカットのリスナー
     const handleKeyDown = (e: KeyboardEvent) => {
       if (
         e.target instanceof HTMLInputElement ||
@@ -363,6 +372,13 @@ export default function App() {
 
   const handleDownload = useCallback(() => {
     if (!generatedBufferRef.current) return;
+
+    ReactGA.event({
+      category: 'User',
+      action: 'Download VMD',
+      label: audioFile?.name ?? 'unknown'
+    });
+
     const baseName = audioFile?.name.replace(/\.[^.]+$/, '') ?? 'camera';
     downloadVMD(generatedBufferRef.current, `camera_${baseName}.vmd`);
   }, [audioFile]);
